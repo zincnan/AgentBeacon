@@ -1,0 +1,17 @@
+# Build outputs
+receiver/bin/
+receiver/obj/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+# dotnet user files
+*.user
+*.suo
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
