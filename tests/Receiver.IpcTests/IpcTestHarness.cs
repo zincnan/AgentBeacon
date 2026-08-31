@@ -59,12 +59,29 @@ internal sealed class IpcTestHarness : IAsyncDisposable
         var stdoutLog = Path.Combine(Path.GetTempPath(),
             $"ab-receiver-{Guid.NewGuid():N}.log");
 
+        // Windows dotnet/ASP.NET Core launched from a \\wsl.localhost UNC
+        // current working directory may fail/hang during host initialization
+        // (Receiver process gets stuck around WebApplication.CreateBuilder
+        // / hosting startup, even though the same .dll + same args start
+        // fine when the working directory is a local Windows path).
+        // This is an ASP.NET Core / UNC path resolution interaction, not
+        // an AgentBeacon Receiver bug. To keep the Receiver.IpcTests
+        // hermetic, give the Receiver child process a local Windows
+        // working directory on Windows. The Receiver's DLL path itself can
+        // still be the UNC path discovered by FindReceiverDll — only the
+        // process CWD needs to be local. On Linux this is a no-op.
+        var childWorkingDirectory = OperatingSystem.IsWindows()
+            ? Path.Combine(Path.GetTempPath(), "AgentBeacon", "Receiver.IpcTests")
+            : Environment.CurrentDirectory;
+        Directory.CreateDirectory(childWorkingDirectory);
+
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            WorkingDirectory = childWorkingDirectory,
         };
         psi.ArgumentList.Add(dll);
         psi.ArgumentList.Add("--bind");
