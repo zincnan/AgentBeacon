@@ -12,24 +12,19 @@
         SizeToContent="WidthAndHeight"
         Title="AgentBeacon">
     <Border Background="#CC1E1E1E" CornerRadius="6" Padding="6,8">
-        <StackPanel Orientation="Vertical" VerticalAlignment="Top">
-            <ItemsControl x:Name="LampList" Width="14">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <StackPanel Orientation="Vertical"/>
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Ellipse Width="10" Height="10" Margin="0,2"
-                                 Fill="{Binding LampColor}"
-                                 ToolTip="{Binding TooltipText}"/>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-            <TextBlock x:Name="StatusText" Foreground="#8B949E" FontSize="9"
-                       Margin="0,4,0,0" HorizontalAlignment="Center"
-                       Text="connecting"/>
-        </StackPanel>
+        <ItemsControl x:Name="LampList" Width="14">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Vertical"/>
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Ellipse Width="10" Height="10" Margin="0,2"
+                             Fill="{Binding LampColor}"
+                             ToolTip="{Binding TooltipText}"/>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
     </Border>
 </Window>

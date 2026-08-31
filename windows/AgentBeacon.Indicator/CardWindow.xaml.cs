@@ -32,10 +32,17 @@ public partial class CardWindow : Window
     /// Slide the card in from off-screen right. The animation is a one-shot
     /// tween from "off-screen-right" to <paramref name="targetLeft"/>, with
     /// the window's base Left pre-set to <paramref name="targetLeft"/> so
-    /// that once the animation finishes (and even if FillBehavior reverts
-    /// to the base), the window rests exactly at the target position. The
-    /// animation is detached in the same callback to keep PositionCard's
-    /// later Left assignments authoritative.
+    /// that once the animation finishes the window rests exactly at the
+    /// target position.
+    ///
+    /// On the animation's Completed event we detach it via
+    /// BeginAnimation(LeftProperty, null) and pin <c>Left = targetLeft</c>.
+    /// We do NOT touch <c>Top</c> in Completed: LayoutCards
+    /// (<see cref="MainWindow.LayoutCards"/>) is the single source of
+    /// truth for vertical position, and it may legitimately have moved
+    /// <c>Top</c> during the 220 ms animation window if another Show /
+    /// Hide / SizeChanged arrived. Re-pinning <c>Top</c> here with a value
+    /// captured 220 ms earlier would clobber the latest layout.
     /// </summary>
     public void SlideInFromRight(double targetLeft, double targetTop)
     {
@@ -60,12 +67,15 @@ public partial class CardWindow : Window
         };
         anim.Completed += (_, _) =>
         {
-            // Pin final position and detach the animation. After this,
-            // subsequent PositionCard writes to Left take effect
-            // immediately (no HoldEnd blocking future writes).
+            // Detach the animation so future LayoutCards writes to Left
+            // take effect immediately (FillBehavior.Stop would otherwise
+            // keep the animation "applied" and intercept subsequent
+            // writes), and pin Left = targetLeft so the final on-screen
+            // position matches the seat LayoutCards computed at slide
+            // start. We deliberately do not re-pin Top here: see the
+            // xmldoc above.
             BeginAnimation(LeftProperty, null);
             Left = targetLeft;
-            Top = targetTop;
         };
         BeginAnimation(LeftProperty, anim);
     }

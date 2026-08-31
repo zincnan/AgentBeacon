@@ -9,7 +9,17 @@
     <RootNamespace>AgentBeacon.Indicator</RootNamespace>
     <AssemblyName>agentbeacon-indicator</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- WPF Binding/XAML requires a real (non-invariant) culture;
+         InvariantGlobalization=true crashes the app at startup with
+         "Cannot find non-neutral culture related to 'en-us'" because
+         WPF treats machine-preference cultures (en-US) as a specific
+         culture that doesn't exist under invariant globalization.
+         This is the Indicator executable only — Receiver / Shared /
+         Indicator.Core / test projects keep their existing
+         InvariantGlobalization setting (they don't host WPF).
+         Set explicitly so Directory.Build.props can't silently
+         re-introduce it. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>

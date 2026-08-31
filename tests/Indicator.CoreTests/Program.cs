@@ -49,6 +49,26 @@ public static class Program
             ("ReadExactlyOrEofAsync_CleanEof_ReturnsFalse",        ReadExactlyOrEofAsync_CleanEof_ReturnsFalse),
             ("ReadExactlyOrEofAsync_TruncatedAfterSome_Throws",    ReadExactlyOrEofAsync_TruncatedAfterSome_Throws),
             ("ReadExactlyOrEofAsync_HeaderSaysPayloadButEof_Throws", ReadExactlyOrEofAsync_HeaderSaysPayloadButEof_Throws),
+
+            // Round 2 final close-out — authoritative removal must emit Hide
+            ("Store_AuthoritativeRemoval_ApprovalEmitsHide",        Store_AuthoritativeRemoval_ApprovalEmitsHide),
+            ("Store_AuthoritativeRemoval_ReappearsAsFresh",        Store_AuthoritativeRemoval_ReappearsAsFresh),
+
+            // Round 2 final close-out — aged-completed tombstone is NOT
+            // cleared by an authoritative empty snapshot (must survive
+            // reconnect / full-snapshot re-broadcast to prevent zombie
+            // completed lamps from reanimating).
+            ("Store_AuthoritativeEmpty_DoesNotClearAgedCompletedTombstone",
+                                                              Store_AuthoritativeEmpty_DoesNotClearAgedCompletedTombstone),
+            ("Store_AuthoritativeEmpty_NewerCompletedOrRunning_ClearsTombstone",
+                                                              Store_AuthoritativeEmpty_NewerCompletedOrRunning_ClearsTombstone),
+
+            // Round 2 final close-out — card stack layout (pure helper)
+            ("CardStackLayout_Empty_NoCrash",                     CardStackLayout_Empty_NoCrash),
+            ("CardStackLayout_SingleFits",                        CardStackLayout_SingleFits),
+            ("CardStackLayout_TwoCardsFit_NoOverlap",            CardStackLayout_TwoCardsFit_NoOverlap),
+            ("CardStackLayout_OverflowHidesOldestNotOverlap",    CardStackLayout_OverflowHidesOldestNotOverlap),
+            ("CardStackLayout_UnequalHeights_NoOverlapInvariant",CardStackLayout_UnequalHeights_NoOverlapInvariant),
         };
 
         var sw0 = Stopwatch.StartNew();
@@ -735,5 +755,266 @@ public static class Program
             threw = true;
         }
         Assert(threw, "header-says-payload-but-EOF must be IOException, not clean disconnect");
+    }
+
+    // ---- Round 2 final close-out: authoritative removal must emit Hide ----
+
+    private static async Task Store_AuthoritativeRemoval_ApprovalEmitsHide()
+    {
+        // Receiver is the authoritative source. When a session that the
+        // UI has been showing an approval card for is removed from a
+        // subsequent snapshot (e.g. Receiver restart, snapshot reset,
+        // Receiver's own authoritative eviction), the store must emit
+        // CardEventKind.Hide so the WPF layer closes the card and
+        // cancels the auto-hide timer. Without this, the approval
+        // card would stay on screen forever after the lamp is gone.
+        var store = new SessionViewModelStore();
+        var sink = new RecordingSink();
+        store.CardEvent += sink.OnEvent;
+
+        var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        store.ApplySnapshot(new[] { Snap("s1", "approval", t0, message: "needs review") }, t0);
+        Assert(sink.Events.Count == 1, "initial Show");
+        Assert(sink.Events[0].Kind == "Show", "initial event is Show");
+
+        // Authoritative empty snapshot: Receiver stopped reporting s1.
+        store.ApplySnapshot(Array.Empty<SessionSnapshot>(), t0.AddSeconds(5));
+        Assert(store.Sessions.Count == 0, "lamp removed");
+        Assert(sink.Events.Count == 2, $"expected Show + Hide, got {sink.Events.Count}");
+        Assert(sink.Events[1].Kind == "Hide", $"second event must be Hide, got {sink.Events[1].Kind}");
+        Assert(sink.Events[1].SessionId == "s1", "Hide carries the removed session_id");
+        Assert(sink.Events[1].Status == "approval", "Hide carries the last-known status");
+    }
+
+    private static async Task Store_AuthoritativeRemoval_ReappearsAsFresh()
+    {
+        // The same session_id reappearing after authoritative removal
+        // must be treated as a brand new session: full re-Show chain
+        // (running -> approval Show; or completed -> completed Show
+        // again; etc.) without any stale dedup or tombstone getting
+        // in the way.
+        var store = new SessionViewModelStore();
+        var sink = new RecordingSink();
+        store.CardEvent += sink.OnEvent;
+
+        var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        // First lifecycle
+        store.ApplySnapshot(new[] { Snap("s1", "approval", t0) }, t0);
+        store.ApplySnapshot(Array.Empty<SessionSnapshot>(), t0.AddSeconds(5));
+        Assert(sink.Events.Count == 2, "Show + Hide from first lifecycle");
+        Assert(sink.Events[1].Kind == "Hide", "Hide emitted on authoritative removal");
+
+        // Reappearance: approval again at a strictly-newer updated_at
+        store.ApplySnapshot(new[] { Snap("s1", "approval", t0.AddMinutes(1)) }, t0.AddMinutes(1));
+        Assert(store.Sessions.Count == 1, "reappeared lamp");
+        Assert(sink.Events.Count == 3, $"Show emitted on reappearance, got {sink.Events.Count}");
+        Assert(sink.Events[2].Kind == "Show", $"reappearance event is Show, got {sink.Events[2].Kind}");
+        Assert(sink.Events[2].Status == "approval", "reappearance Show carries approval status");
+
+        // Removed again, must emit a second Hide
+        store.ApplySnapshot(Array.Empty<SessionSnapshot>(), t0.AddMinutes(2));
+        Assert(sink.Events.Count == 4, $"second Hide emitted, got {sink.Events.Count}");
+        Assert(sink.Events[3].Kind == "Hide", "second Hide event");
+    }
+
+    // ---- Round 2 final close-out: aged-completed tombstone survives
+    // authoritative empty snapshot. ----
+
+    private static async Task Store_AuthoritativeEmpty_DoesNotClearAgedCompletedTombstone()
+    {
+        // Product rule: when a completed session ages out (5 min past
+        // updated_at), the lamp is dropped and a hidden-completed
+        // tombstone is set. Subsequent identical / older completed
+        // re-broadcasts — including those wrapped in an authoritative
+        // empty snapshot, an authoritative full-snapshot reconnect,
+        // or anything short of a strictly-newer completed updated_at
+        // or a non-completed event for the same session_id — must NOT
+        // bring the lamp back. The aged-completed tombstone is NOT
+        // cleared by an authoritative empty snapshot: empty snapshots
+        // only iterate currently-live _byId sessions and aged-out
+        // completed sessions are no longer in _byId.
+        var store = new SessionViewModelStore();
+        var sink = new RecordingSink();
+        store.CardEvent += sink.OnEvent;
+
+        var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        store.ApplySnapshot(new[] { Snap("s1", "completed", t0) }, t0);
+        Assert(sink.Events.Count == 1, "initial completed Show");
+
+        // 5+ minutes pass: Tick ages the lamp out and writes the tombstone.
+        store.Tick(t0.AddMinutes(6));
+        Assert(store.Sessions.Count == 0, "completed lamp aged out");
+
+        // Authoritative empty snapshot (e.g. Receiver restart, snapshot
+        // reset). The store iterates _byId — which no longer contains
+        // s1 — so this MUST NOT clear the tombstone. We can't observe
+        // the tombstone directly, but we can observe its effect.
+        store.ApplySnapshot(Array.Empty<SessionSnapshot>(), t0.AddMinutes(7));
+        Assert(sink.Events.Count == 1, "no new events from empty snapshot (no current live session to Hide)");
+        Assert(store.Sessions.Count == 0, "still empty");
+
+        // Now an authoritative full snapshot re-broadcasts the SAME
+        // completed event for s1 at the SAME updated_at. This is exactly
+        // the "Receiver forgot to evict this session" / "Receiver
+        // restarted and is re-sending its in-memory table" scenario.
+        // Because the tombstone is still alive (older-or-equal
+        // updated_at), the store must NOT add s1 back, NOT emit a new
+        // Show, NOT make the lamp reanimate.
+        store.ApplySnapshot(new[] { Snap("s1", "completed", t0, message: "done") }, t0.AddMinutes(8));
+        Assert(store.Sessions.Count == 0, "same-updated_at completed must NOT resurrect the lamp");
+        Assert(sink.Events.Count == 1, $"no new card events from same-updated_at re-broadcast; got {sink.Events.Count}");
+    }
+
+    private static async Task Store_AuthoritativeEmpty_NewerCompletedOrRunning_ClearsTombstone()
+    {
+        // Counterpart to the previous test: only a strictly-newer
+        // completed updated_at or a non-completed event for the same
+        // session is allowed to clear an aged-completed tombstone.
+        // (empty / identical / older completed snapshots must not.)
+        //
+        // We start from the same aged-out state as the previous test,
+        // then exercise BOTH clearing paths in independent store
+        // instances to keep each assertion self-contained.
+
+        // Path A: strictly-newer completed updated_at.
+        {
+            var store = new SessionViewModelStore();
+            var sink = new RecordingSink();
+            store.CardEvent += sink.OnEvent;
+
+            var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+            store.ApplySnapshot(new[] { Snap("s1", "completed", t0) }, t0);
+            store.Tick(t0.AddMinutes(6));
+            store.ApplySnapshot(Array.Empty<SessionSnapshot>(), t0.AddMinutes(7));
+            // Tombstone now blocks same-or-older completed re-broadcasts.
+            var t1 = t0.AddMinutes(10);
+            store.ApplySnapshot(new[] { Snap("s1", "completed", t1, message: "done again") }, t1);
+            Assert(store.Sessions.Count == 1, "newer completed brings the lamp back");
+            Assert(store.Sessions[0].LampColor == "#3FB950", "completed lamp is green");
+            Assert(sink.Events.Count == 2, "new completed Show after tombstone cleared");
+            Assert(sink.Events[1].Kind == "Show", "second event is Show");
+            Assert(sink.Events[1].AutoHideAfterMs == 5000, "completed card auto-hide 5s");
+        }
+
+        // Path B: a non-completed event for the same session_id
+        // (running, approval, or failed) clears the tombstone and the
+        // lamp reappears.
+        {
+            var store = new SessionViewModelStore();
+            var sink = new RecordingSink();
+            store.CardEvent += sink.OnEvent;
+
+            var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+            store.ApplySnapshot(new[] { Snap("s1", "completed", t0) }, t0);
+            store.Tick(t0.AddMinutes(6));
+            store.ApplySnapshot(Array.Empty<SessionSnapshot>(), t0.AddMinutes(7));
+            // Tombstone blocks same completed; non-completed clears it.
+            var t1 = t0.AddMinutes(10);
+            store.ApplySnapshot(new[] { Snap("s1", "running", t1) }, t1);
+            Assert(store.Sessions.Count == 1, "running clears tombstone and reappears");
+            Assert(store.Sessions[0].LampColor == "#2F81F7", "running lamp is blue");
+            // Running produces no card event; sink only saw the initial Show.
+            Assert(sink.Events.Count == 1, "running does not emit a card event");
+        }
+    }
+
+    // ---- Round 2 final close-out: card stack layout (pure helper) ----
+
+    private static async Task CardStackLayout_Empty_NoCrash()
+    {
+        var p = CardStackLayout.Compute(Array.Empty<double>(), safeTop: 64, safeBottom: 800, gap: 8);
+        Assert(p.Length == 0, "empty input yields empty placements");
+    }
+
+    private static async Task CardStackLayout_SingleFits()
+    {
+        var p = CardStackLayout.Compute(new[] { 100.0 }, safeTop: 64, safeBottom: 800, gap: 8);
+        Assert(p.Length == 1, "length");
+        Assert(p[0].Fits, "single card inside safe area must fit");
+        Assert(p[0].Top == 700, $"top = safeBottom - height = 800 - 100 = 700; got {p[0].Top}");
+    }
+
+    private static async Task CardStackLayout_TwoCardsFit_NoOverlap()
+    {
+        var p = CardStackLayout.Compute(new[] { 100.0, 100.0 }, safeTop: 64, safeBottom: 800, gap: 8);
+        Assert(p.Length == 2, "length");
+        Assert(p[0].Fits && p[1].Fits, "both cards fit in the safe area");
+        // Order is oldest-first, so index 0 is the OLDER card (top of stack),
+        // index 1 is the NEWER card (bottom of stack). Both must have
+        // distinct tops and the bottom card's bottom == safeBottom.
+        Assert(p[0].Top != p[1].Top, "tops must be distinct (no overlap)");
+        // Bottom card (newer, index 1): top = safeBottom - height = 700.
+        Assert(p[1].Top == 700, $"bottom card top = 700; got {p[1].Top}");
+        // Top card (older, index 0): top = 700 - gap - 100 = 592.
+        Assert(p[0].Top == 592, $"top card top = 592; got {p[0].Top}");
+    }
+
+    private static async Task CardStackLayout_OverflowHidesOldestNotOverlap()
+    {
+        // Three 200-px cards. Safe band is [100, 800] -> 700 px usable.
+        // 3 * 200 + 2 * 8 gap = 616 px. The stack physically fits,
+        // but force a tighter safeTop so the oldest card overflows:
+        // safeTop = 300. Then top card (oldest, index 0) has its
+        // natural top at 800 - 3*200 - 2*8 = 184 < 300 -> overflow.
+        var p = CardStackLayout.Compute(
+            new[] { 200.0, 200.0, 200.0 },
+            safeTop: 300, safeBottom: 800, gap: 8);
+
+        Assert(p.Length == 3, "length");
+        Assert(!p[0].Fits, "oldest card overflows safeTop");
+        Assert(p[1].Fits && p[2].Fits, "newer cards still fit");
+
+        // Two cards that fit must NOT share the same top.
+        var fittingTops = new[] { p[1].Top, p[2].Top };
+        Assert(fittingTops[0] != fittingTops[1],
+            $"newer cards must not overlap; tops were {fittingTops[0]} and {fittingTops[1]}");
+
+        // The overflowed card's natural top is still reported; the
+        // caller is responsible for hiding it.
+        Assert(p[0].Top < 300, $"overflow card's natural top reported as {p[0].Top}");
+    }
+
+    private static async Task CardStackLayout_UnequalHeights_NoOverlapInvariant()
+    {
+        // Stronger version of NoOverlap: even with wildly different
+        // heights, no two FITTING cards may share a vertical region.
+        // The invariant we assert for every pair of adjacent fitting
+        // cards (in newest-to-oldest order) is:
+        //     older.Top + older.Height + gap <= newer.Top
+        // (i.e. there is at least `gap` pixels between the bottom of
+        // the older card and the top of the newer card; otherwise they
+        // visually overlap.) Same `top != top` is not enough — two
+        // cards could have different tops yet still collide when
+        // heights differ.
+        double[] heights = { 60, 180, 90, 200, 70, 150 };
+        const double safeTop = 0;
+        const double safeBottom = 900;
+        const double gap = 8;
+
+        var p = CardStackLayout.Compute(heights, safeTop, safeBottom, gap);
+
+        // Every card fits because the safe band is large enough.
+        for (int i = 0; i < p.Length; i++)
+        {
+            Assert(p[i].Fits, $"card[{i}] (height={heights[i]}) should fit in safe band; got Top={p[i].Top}");
+        }
+
+        // Bottommost (newest, last index) card must sit at safeBottom.
+        var newest = p[p.Length - 1];
+        Assert(newest.Top + heights[heights.Length - 1] == safeBottom,
+            $"newest card bottom must equal safeBottom; got {newest.Top + heights[^1]}");
+
+        // Walking newest -> oldest: each older card's natural bottom
+        // must be <= (newer card's top - gap).
+        for (int i = p.Length - 1; i >= 1; i--)
+        {
+            double olderTop = p[i - 1].Top;
+            double olderHeight = heights[i - 1];
+            double newerTop = p[i].Top;
+            double requiredGap = olderTop + olderHeight + gap;
+            Assert(requiredGap <= newerTop + 1e-9,
+                $"cards [{i-1}] (h={olderHeight}) and [{i}] (h={heights[i]}) overlap or touch; " +
+                $"older bottom = {olderTop + olderHeight}, required gap {gap}, newer top = {newerTop}");
+        }
     }
 }

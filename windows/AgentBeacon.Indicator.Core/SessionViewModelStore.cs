@@ -152,9 +152,34 @@ public sealed class SessionViewModelStore
 
         // 2. Remove sessions that are no longer in the snapshot. (The
         //    Receiver is authoritative — if it stopped reporting a session,
-        //    we forget it.) Tombstone and dedup state are also released
-        //    so that, if the session later reappears under the same id, it
-        //    is treated as a fresh appearance.
+        //    we forget it.) For each such session we ALSO emit
+        //    CardEventKind.Hide so the WPF layer can close any visible
+        //    card and cancel its per-session auto-hide timer.
+        //    Receiver-driven removals must be visible to the UI: a
+        //    previous Show can leave a card up (e.g. a persistent
+        //    approval card) that the lamp column would otherwise have
+        //    lost track of. The WPF layer's Hide handler is idempotent
+        //    and safe when no card is present.
+        //
+        //    NOTE on hidden-completed tombstones: this loop walks
+        //    _byId.Keys, so it only touches sessions that are CURRENTLY
+        //    live in the lamp column. Aged-out completed sessions were
+        //    already removed from _byId by Tick() (5 min past their
+        //    updated_at) and their tombstones in _hiddenCompleted
+        //    survive on purpose: a later authoritative empty / full
+        //    snapshot must NOT bring them back. Only a strictly-newer
+        //    completed updated_at, or a non-completed event for the
+        //    same session_id, is allowed to clear an aged-completed
+        //    tombstone (see the tombstone check at the top of this
+        //    method and Store_AuthoritativeEmpty_DoesNotClearAgedCompletedTombstone).
+        //
+        //    What this loop DOES clear for a removed live session: its
+        //    own dedup state (_lastCardShownUpdatedAt /
+        //    _lastCardShownStatus) and any in-flight tombstone it might
+        //    have had under the same id (rare; normally a completed
+        //    session that aged out has already left _byId before this
+        //    loop runs, so this is mostly belt-and-braces for racing
+        //    snapshots).
         var removed = new List<string>();
         foreach (var id in _byId.Keys)
         {
@@ -165,6 +190,13 @@ public sealed class SessionViewModelStore
             if (_byId.TryRemove(id, out var vm))
             {
                 RemoveFromOrder(vm);
+                // Emit Hide while we still hold a reference to the VM,
+                // so subscribers see a fully-populated CardEvent.Session.
+                CardEvent?.Invoke(new CardEvent
+                {
+                    Kind = CardEventKind.Hide,
+                    Session = vm,
+                });
             }
             _lastCardShownUpdatedAt.TryRemove(id, out _);
             _lastCardShownStatus.TryRemove(id, out _);
