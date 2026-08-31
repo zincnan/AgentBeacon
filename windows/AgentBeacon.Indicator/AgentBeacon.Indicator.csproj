@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AgentBeacon.Indicator</RootNamespace>
+    <AssemblyName>agentbeacon-indicator</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\AgentBeacon.Shared.csproj" />
+    <ProjectReference Include="..\AgentBeacon.Indicator.Core\AgentBeacon.Indicator.Core.csproj" />
+  </ItemGroup>
+
+</Project>

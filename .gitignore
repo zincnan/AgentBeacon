@@ -1,6 +1,16 @@
 # Build outputs
 receiver/bin/
 receiver/obj/
+shared/bin/
+shared/obj/
+tests/Receiver.IpcTests/bin/
+tests/Receiver.IpcTests/obj/
+tests/Indicator.CoreTests/bin/
+tests/Indicator.CoreTests/obj/
+windows/AgentBeacon.Indicator.Core/bin/
+windows/AgentBeacon.Indicator.Core/obj/
+windows/AgentBeacon.Indicator/bin/
+windows/AgentBeacon.Indicator/obj/
 
 # Python caches
 __pycache__/
@@ -15,3 +25,10 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# Test artifacts
+tests/.tmp/
+*.log
+
+# Local review artifacts (intentionally narrow, not *.diff)
+docs/diff.diff

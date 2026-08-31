@@ -1,23 +1,14 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentBeacon.Shared;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Net.Http.Headers;
 
 namespace AgentBeacon.Receiver;
 
-public sealed class SessionState
-{
-    public required string Status { get; init; }
-    public required string Agent { get; init; }
-    public string? Host { get; init; }
-    public string? Message { get; init; }
-    public required DateTimeOffset UpdatedAt { get; init; }
-}
-
-public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug)
+public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug, string? Pipe)
 {
     public static (CliOptions Opts, int? ExitCode) Parse(string[] args)
     {
@@ -30,13 +21,20 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
             {
                 Console.Error.WriteLine(
                     $"agentbeacon-receiver: AGENTBEACON_PORT must be an integer in [1, 65535], got '{portEnv}'");
-                return (new CliOptions(bind, port, Token: null, Debug: false), 4);
+                return (new CliOptions(bind, port, Token: null, Debug: false, Pipe: null), 4);
             }
             port = parsedFromEnv;
         }
         string? token = Environment.GetEnvironmentVariable("AGENTBEACON_TOKEN");
         bool debug = false;
         bool help = false;
+        string? pipe = Environment.GetEnvironmentVariable("AGENTBEACON_PIPE");
+        // Default: enable the canonical Named Pipe IPC. Override with
+        // AGENTBEACON_PIPE=<name>, --pipe <name>, or --no-pipe to disable.
+        if (string.IsNullOrEmpty(pipe))
+        {
+            pipe = IpcConstants.DefaultPipeName;
+        }
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -46,7 +44,7 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
                     if (i + 1 >= args.Length)
                     {
                         Console.Error.WriteLine("agentbeacon-receiver: --bind requires a value");
-                        return (new CliOptions(bind, port, token, debug), 4);
+                        return (new CliOptions(bind, port, token, debug, pipe), 4);
                     }
                     bind = args[++i];
                     break;
@@ -54,14 +52,14 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
                     if (i + 1 >= args.Length)
                     {
                         Console.Error.WriteLine("agentbeacon-receiver: --port requires a value");
-                        return (new CliOptions(bind, port, token, debug), 4);
+                        return (new CliOptions(bind, port, token, debug, pipe), 4);
                     }
                     var portArg = args[++i];
                     if (!TryParsePort(portArg, out var parsed))
                     {
                         Console.Error.WriteLine(
                             $"agentbeacon-receiver: --port must be an integer in [1, 65535], got '{portArg}'");
-                        return (new CliOptions(bind, port, token, debug), 4);
+                        return (new CliOptions(bind, port, token, debug, pipe), 4);
                     }
                     port = parsed;
                     break;
@@ -69,12 +67,27 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
                     if (i + 1 >= args.Length)
                     {
                         Console.Error.WriteLine("agentbeacon-receiver: --token requires a value");
-                        return (new CliOptions(bind, port, token, debug), 4);
+                        return (new CliOptions(bind, port, token, debug, pipe), 4);
                     }
                     token = args[++i];
                     break;
                 case "--debug":
                     debug = true;
+                    break;
+                case "--pipe":
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.Error.WriteLine("agentbeacon-receiver: --pipe requires a value");
+                        return (new CliOptions(bind, port, token, debug, pipe), 4);
+                    }
+                    pipe = args[++i];
+                    if (string.IsNullOrEmpty(pipe))
+                    {
+                        pipe = null;
+                    }
+                    break;
+                case "--no-pipe":
+                    pipe = null;
                     break;
                 case "-h":
                 case "--help":
@@ -82,17 +95,17 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
                     break;
                 default:
                     Console.Error.WriteLine($"agentbeacon-receiver: unknown argument: {args[i]}");
-                    return (new CliOptions(bind, port, token, debug), 4);
+                    return (new CliOptions(bind, port, token, debug, pipe), 4);
             }
         }
 
         if (help)
         {
             PrintHelp();
-            return (new CliOptions(bind, port, token, debug), 0);
+            return (new CliOptions(bind, port, token, debug, pipe), 0);
         }
 
-        return (new CliOptions(bind, port, token, debug), null);
+        return (new CliOptions(bind, port, token, debug, pipe), null);
     }
 
     private static bool TryParsePort(string s, out int port)
@@ -109,6 +122,8 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
         Console.WriteLine("  --bind <addr>    bind address (default 0.0.0.0; env: AGENTBEACON_BIND)");
         Console.WriteLine("  --port <port>    TCP port 1..65535 (default 8765; env: AGENTBEACON_PORT)");
         Console.WriteLine("  --token <token>  bearer token (default $AGENTBEACON_TOKEN)");
+        Console.WriteLine("  --pipe <name>    Named Pipe name for IPC (default $AGENTBEACON_PIPE or AgentBeacon.Status)");
+        Console.WriteLine("  --no-pipe        disable Named Pipe IPC");
         Console.WriteLine("  --debug          enable /debug/sessions endpoint (off by default)");
         Console.WriteLine("  -h, --help       show this help");
     }
@@ -124,7 +139,7 @@ public static class Program
         "running", "approval", "completed", "failed"
     };
 
-    public static int Main(string[] args)
+    public static async Task<int> Main(string[] args)
     {
         var (opts, exit) = CliOptions.Parse(args);
         if (exit.HasValue) return exit.Value;
@@ -135,8 +150,20 @@ public static class Program
             return 4;
         }
 
-        var state = new ConcurrentDictionary<string, SessionState>(StringComparer.Ordinal);
+        var store = new SessionStateStore();
         var bearer = opts.Token!;
+        SnapshotPublisher? publisher = null;
+        if (!string.IsNullOrEmpty(opts.Pipe))
+        {
+            // Publisher subscribes per-client inside SubscribeWithInitial
+            // (under the store lock); no global Start() needed.
+            publisher = new SnapshotPublisher(store, opts.Pipe!);
+            Console.WriteLine($"agentbeacon-receiver: Named Pipe IPC enabled on '{opts.Pipe}'");
+        }
+        else
+        {
+            Console.WriteLine("agentbeacon-receiver: Named Pipe IPC disabled (no --pipe given)");
+        }
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls($"http://{opts.Bind}:{opts.Port}");
@@ -288,21 +315,26 @@ public static class Program
                 }
 
                 // 10. Last received wins: whole-event replacement.
-                var prev = state.TryGetValue(sessionId, out var oldState) ? oldState.Status : null;
-                state[sessionId] = new SessionState
+                var prevStatus = store.CurrentSnapshot()
+                    .Where(s => s.SessionId == sessionId)
+                    .Select(s => s.Status)
+                    .FirstOrDefault();
+
+                store.Upsert(new SessionSnapshot
                 {
-                    Status = status,
+                    SessionId = sessionId,
                     Agent = agent,
                     Host = host,
                     Message = message,
+                    Status = status,
                     UpdatedAt = DateTimeOffset.UtcNow,
-                };
+                });
 
                 var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>()
                     .CreateLogger("Status");
                 logger.LogInformation(
                     "session={SessionId} agent={Agent} status {Prev} -> {New}",
-                    sessionId, agent, prev ?? "(none)", status);
+                    sessionId, agent, prevStatus ?? "(none)", status);
 
                 return Results.Json(new { session_id = sessionId, status });
             }
@@ -317,15 +349,15 @@ public static class Program
                 {
                     return WriteError(ctx, 401, "unauthorized", "missing or invalid bearer token");
                 }
-                var snapshot = state
-                    .Select(kv => new
+                var snapshot = store.CurrentSnapshot()
+                    .Select(s => new
                     {
-                        session_id = kv.Key,
-                        status = kv.Value.Status,
-                        agent = kv.Value.Agent,
-                        host = kv.Value.Host,
-                        message = kv.Value.Message,
-                        updated_at = kv.Value.UpdatedAt,
+                        session_id = s.SessionId,
+                        status = s.Status,
+                        agent = s.Agent,
+                        host = s.Host,
+                        message = s.Message,
+                        updated_at = s.UpdatedAt,
                     })
                     .ToList();
                 return Results.Json(snapshot);
@@ -340,12 +372,20 @@ public static class Program
 
         try
         {
-            app.Run();
+            await app.RunAsync();
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"agentbeacon-receiver: fatal: {ex.Message}");
+            if (publisher is not null)
+            {
+                await publisher.DisposeAsync();
+            }
             return 1;
+        }
+        if (publisher is not null)
+        {
+            await publisher.DisposeAsync();
         }
         return 0;
     }
