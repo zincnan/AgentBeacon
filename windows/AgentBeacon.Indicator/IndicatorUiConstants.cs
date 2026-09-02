@@ -6,32 +6,74 @@ namespace AgentBeacon.Indicator;
 /// </summary>
 public static class IndicatorUiConstants
 {
-    /// <summary>Duration of the right-to-left slide-in animation when a card first appears.</summary>
-    public const int SlideInDurationMs = 220;
+    // --- Lamp module visual dimensions ---
 
-    /// <summary>Right-edge gutter (px) between card window and monitor edge.</summary>
-    public const double CardRightGutter = 12;
+    /// <summary>Total width of one Agent lamp module (housing + 3 lights + label).</summary>
+    public const double ModuleWidth = 84;
 
-    /// <summary>Vertical gap (px) between stacked cards.</summary>
-    public const double CardStackGap = 8;
+    /// <summary>Total height of one Agent lamp module (label + housing + 3 lights).</summary>
+    public const double ModuleHeight = 108;
 
-    /// <summary>
-    /// Right-edge margin (px) between the lamp column and the primary
-    /// monitor's working-area right edge. Slightly larger than the
-    /// old 4 px so the lamp visually "sits" off the edge rather than
-    /// touching it.
-    /// </summary>
+    /// <summary>Vertical gap between adjacent lamp modules.</summary>
+    public const double ModuleGap = 12;
+
+    /// <summary>Right-edge margin (px) between lamp column and primary monitor's working-area right edge.</summary>
     public const double LampRightMargin = 12;
 
     /// <summary>
     /// Top safe margin (px) added to the primary monitor's working-area
-    /// top before placing the lamp column. Chosen to sit clearly BELOW
-    /// the standard Windows 10 / 11 caption-button row in a maximized
-    /// window (browser, VS Code, Terminal, etc.) so the lamp does not
-    /// overlap the user's Close / Maximize / Minimize buttons.
-    /// Same value is used to clamp the top of the stacked notification
-    /// cards so a card burst cannot crawl up into the caption area
-    /// either.
+    /// top before placing the first module. Chosen to sit clearly BELOW
+    /// the standard Windows 10 / 11 caption-button row.
     /// </summary>
     public const double LampTopSafeMargin = 64;
+
+    // --- Lamp light sizes ---
+
+    /// <summary>Diameter of one physical light dot inside the module.</summary>
+    public const double LightDiameter = 17;
+
+    /// <summary>Vertical gap between adjacent light dots inside the module.</summary>
+    public const double LightGap = 6;
+
+    /// <summary>
+    /// Housing corner radius. NOTE: this is a System.Windows.CornerRadius
+    /// (not a bare double) because LampModuleView.xaml binds it via
+    /// {x:Static}. x:Static performs NO type conversion — feeding a
+    /// double const into the CornerRadius-typed property throws
+    /// XamlParseException ("'10' is not a valid value for CornerRadius")
+    /// at runtime, which is exactly the bug that made the whole UI
+    /// silently invisible (the exception was swallowed per-snapshot).
+    /// </summary>
+    public static readonly System.Windows.CornerRadius ModuleCornerRadius = new(10);
+
+    /// <summary>
+    /// Padding inside the housing (around the lights). Same rule as
+    /// ModuleCornerRadius: must be a Thickness for {x:Static} binding.
+    /// </summary>
+    public static readonly System.Windows.Thickness ModuleHousingPadding = new(7);
+
+    // --- Card animation ---
+
+    /// <summary>Duration of the card slide-out (left) animation.</summary>
+    public const int CardSlideOutDurationMs = 220;
+
+    /// <summary>Duration of the card slide-back (right) / retract animation.</summary>
+    public const int CardSlideBackDurationMs = 200;
+
+    /// <summary>
+    /// Gap (px) between the right edge of the card and the left edge of
+    /// the lamp module it visually belongs to.
+    /// </summary>
+    public const double CardToModuleGap = 12;
+
+    /// <summary>Vertical gap (px) between collision-adjusted notification cards.</summary>
+    public const double CardVerticalGap = 12;
+
+    // --- Card stay durations (UI policy, not Protocol v1) ---
+    //
+    // Public so it can be referenced from LampStateMapper.CardStayPolicy
+    // and from tests if. / Reference via IndicatorUiConstants directly
+    // from the WPF layer; the Core layer uses LampStateMapper.CardStayPolicy
+    // for pure mappings so Core tests stay free of WPF deps.
+    // (Card stays are mirrored in LampStateMapper.CardStayPolicy.)
 }

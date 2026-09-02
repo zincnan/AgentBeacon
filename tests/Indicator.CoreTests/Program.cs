@@ -13,7 +13,7 @@ public static class Program
         var tests = new (string Name, Func<Task> Run)[]
         {
             ("Store_Running_NoCard",                                Store_Running_NoCard),
-            ("Store_Approval_ShowsPersistentCard",                  Store_Approval_ShowsPersistentCard),
+            ("Store_Approval_ShowsCardWith8sTimer",                 Store_Approval_ShowsCardWith8sTimer),
             ("Store_ApprovalToRunning_HidesCard",                   Store_ApprovalToRunning_HidesCard),
             ("Store_Completed_ShowsThenAutoHideSignal",             Store_Completed_ShowsThenAutoHideSignal),
             ("Store_Failed_Lamp_LongLived_Card10s",                 Store_Failed_Lamp_LongLived_Card10s),
@@ -24,7 +24,7 @@ public static class Program
             ("Store_Completed_HiddenAfter5MinFromUpdated",          Store_Completed_HiddenAfter5MinFromUpdated),
             ("Store_Failed_HiddenAfter5Min_StillPresent",          Store_Failed_HiddenAfter5Min_StillPresent),
             ("Store_RunningToRunning_NewerUpdated_NoRedup",         Store_RunningToRunning_NewerUpdated_NoRedup),
-            ("Store_ApprovalToApproval_NewerUpdated_Updates",       Store_ApprovalToApproval_NewerUpdated_Updates),
+            ("Store_ApprovalToApproval_NewerUpdated_ReShows",       Store_ApprovalToApproval_NewerUpdated_ReShows),
             ("Store_MultiSession_StableOrder",                      Store_MultiSession_StableOrder),
             ("Store_RemovedFromSnapshot_Forgotten",                 Store_RemovedFromSnapshot_Forgotten),
             ("Store_UnknownStatus_Throws",                          Store_UnknownStatus_Throws),
@@ -64,11 +64,35 @@ public static class Program
                                                               Store_AuthoritativeEmpty_NewerCompletedOrRunning_ClearsTombstone),
 
             // Round 2 final close-out — card stack layout (pure helper)
-            ("CardStackLayout_Empty_NoCrash",                     CardStackLayout_Empty_NoCrash),
-            ("CardStackLayout_SingleFits",                        CardStackLayout_SingleFits),
-            ("CardStackLayout_TwoCardsFit_NoOverlap",            CardStackLayout_TwoCardsFit_NoOverlap),
-            ("CardStackLayout_OverflowHidesOldestNotOverlap",    CardStackLayout_OverflowHidesOldestNotOverlap),
-            ("CardStackLayout_UnequalHeights_NoOverlapInvariant",CardStackLayout_UnequalHeights_NoOverlapInvariant),
+            // REMOVED in Round 3: cards now anchor to their Agent
+            // module instead of a global right-bottom stack.
+
+            // Round 3 Indicator redesign — three-light mapping
+            ("LampStateMapper_Failed_TopRed",                      LampStateMapper_Failed_TopRed),
+            ("LampStateMapper_Approval_MiddleYellow",              LampStateMapper_Approval_MiddleYellow),
+            ("LampStateMapper_Running_BottomBlue",                LampStateMapper_Running_BottomBlue),
+            ("LampStateMapper_Completed_BottomGreen",             LampStateMapper_Completed_BottomGreen),
+            ("LampStateMapper_RunningVsCompleted_ShareSlot_DifferColor",
+                                                              LampStateMapper_RunningVsCompleted_ShareSlot_DifferColor),
+            ("LampStateMapper_UnknownStatusThrows",               LampStateMapper_UnknownStatusThrows),
+            ("LampStateMapper_AllFourStatuses_LightExactlyOneSlot",
+                                                              LampStateMapper_AllFourStatuses_LightExactlyOneSlot),
+            ("CardStayPolicy_ApprovalIs8s",                       CardStayPolicy_ApprovalIs8s),
+            ("CardStayPolicy_CompletedIs5s",                      CardStayPolicy_CompletedIs5s),
+            ("CardStayPolicy_FailedIs10s",                        CardStayPolicy_FailedIs10s),
+            ("CardStayPolicy_RunningIsNone",                      CardStayPolicy_RunningIsNone),
+            ("CardStayPolicy_UnknownStatusThrows",                CardStayPolicy_UnknownStatusThrows),
+            ("IndicatorHost_FirstApproval_DispatchesSnapshotBeforeCard",
+                                                              IndicatorHost_FirstApproval_DispatchesSnapshotBeforeCard),
+
+            // Round 3 fix — AnchoredCardLayout collision adjustment
+            ("AnchoredCardLayout_Empty_NoCrash",                 AnchoredCardLayout_Empty_NoCrash),
+            ("AnchoredCardLayout_SingleCard_NoOverlap",         AnchoredCardLayout_SingleCard_NoOverlap),
+            ("AnchoredCardLayout_TwoCards_NoOverlap",           AnchoredCardLayout_TwoCards_NoOverlap),
+            ("AnchoredCardLayout_UnequalHeights_NoOverlap",     AnchoredCardLayout_UnequalHeights_NoOverlap),
+            ("AnchoredCardLayout_NaturalTopsOverlap_AutoOffset",AnchoredCardLayout_NaturalTopsOverlap_AutoOffset),
+            ("AnchoredCardLayout_SafeTopSafeBottomClamp",       AnchoredCardLayout_SafeTopSafeBottomClamp),
+            ("AnchoredCardLayout_NoRoom_HidesOlderNotNewer",    AnchoredCardLayout_NoRoom_HidesOlderNotNewer),
         };
 
         var sw0 = Stopwatch.StartNew();
@@ -137,7 +161,7 @@ public static class Program
         Assert(store.Sessions[0].LampColor == "#2F81F7", "running lamp color -> blue");
     }
 
-    private static async Task Store_Approval_ShowsPersistentCard()
+    private static async Task Store_Approval_ShowsCardWith8sTimer()
     {
         await Task.CompletedTask; // sync test
         var store = new SessionViewModelStore();
@@ -149,9 +173,10 @@ public static class Program
 
         Assert(sink.Events.Count == 1, $"expected 1 event, got {sink.Events.Count}");
         Assert(sink.Events[0].Kind == "Show", $"kind={sink.Events[0].Kind}");
-        Assert(sink.Events[0].AutoHideAfterMs is null, "approval card has no auto-hide (persistent)");
+        Assert(sink.Events[0].AutoHideAfterMs == 8000,
+            $"approval card must auto-hide after 8000ms; got {sink.Events[0].AutoHideAfterMs}");
 
-        // Same snapshot re-applied: no new event (no transition).
+        // Same snapshot re-applied (dedup): no new event.
         store.ApplySnapshot(new[] { Snap("s1", "approval", t0) }, t0);
         Assert(sink.Events.Count == 1, $"still 1 event after idempotent re-apply, got {sink.Events.Count}");
     }
@@ -331,7 +356,7 @@ public static class Program
         Assert(store.Sessions.Count == 1, "lamp still there");
     }
 
-    private static async Task Store_ApprovalToApproval_NewerUpdated_Updates()
+    private static async Task Store_ApprovalToApproval_NewerUpdated_ReShows()
     {
         await Task.CompletedTask; // sync test
         var store = new SessionViewModelStore();
@@ -342,10 +367,15 @@ public static class Program
         store.ApplySnapshot(new[] { Snap("s1", "approval", t0, message: "v1") }, t0);
         store.ApplySnapshot(new[] { Snap("s1", "approval", t0.AddSeconds(2), message: "v2") }, t0.AddSeconds(2));
 
-        Assert(sink.Events.Count == 2, $"expected Show + Update, got {sink.Events.Count}");
+        // New Round 3 policy: approval card auto-retracts after 8s. A
+        // strictly-newer updated_at means a new approval event, so we
+        // re-Show (not just Update) so the WPF layer restarts the 8s
+        // stay timer.
+        Assert(sink.Events.Count == 2, $"expected Show + Show, got {sink.Events.Count}");
         Assert(sink.Events[0].Kind == "Show", "first show");
-        Assert(sink.Events[1].Kind == "Update", "second update");
-        Assert(sink.Events[1].AutoHideAfterMs is null, "no auto-hide on approval update");
+        Assert(sink.Events[1].Kind == "Show", "second show re-arms 8s timer");
+        Assert(sink.Events[1].AutoHideAfterMs == 8000,
+            $"re-Showed approval card must carry 8000ms; got {sink.Events[1].AutoHideAfterMs}");
     }
 
     private static async Task Store_MultiSession_StableOrder()
@@ -918,103 +948,315 @@ public static class Program
         }
     }
 
-    // ---- Round 2 final close-out: card stack layout (pure helper) ----
+    // ---- Round 3 Indicator redesign: LampStateMapper + CardStayPolicy ----
 
-    private static async Task CardStackLayout_Empty_NoCrash()
+    private static async Task LampStateMapper_Failed_TopRed()
     {
-        var p = CardStackLayout.Compute(Array.Empty<double>(), safeTop: 64, safeBottom: 800, gap: 8);
-        Assert(p.Length == 0, "empty input yields empty placements");
+        var s = LampStateMapper.ForStatus("failed");
+        Assert(s.ActiveSlot == LampSlot.Top, $"failed lights top slot; got {s.ActiveSlot}");
+        Assert(s.ActiveColorHex == "#F85149", $"failed red hex; got {s.ActiveColorHex}");
+        Assert(s.ColorFor(LampSlot.Middle) == LampStateMapper.LampModuleState.InactiveColorHex,
+            "middle slot must be inactive");
+        Assert(s.ColorFor(LampSlot.Bottom) == LampStateMapper.LampModuleState.InactiveColorHex,
+            "bottom slot must be inactive");
     }
 
-    private static async Task CardStackLayout_SingleFits()
+    private static async Task LampStateMapper_Approval_MiddleYellow()
     {
-        var p = CardStackLayout.Compute(new[] { 100.0 }, safeTop: 64, safeBottom: 800, gap: 8);
-        Assert(p.Length == 1, "length");
-        Assert(p[0].Fits, "single card inside safe area must fit");
-        Assert(p[0].Top == 700, $"top = safeBottom - height = 800 - 100 = 700; got {p[0].Top}");
+        var s = LampStateMapper.ForStatus("approval");
+        Assert(s.ActiveSlot == LampSlot.Middle, $"approval lights middle slot; got {s.ActiveSlot}");
+        Assert(s.ActiveColorHex == "#D29922", $"approval yellow hex; got {s.ActiveColorHex}");
+        Assert(s.ColorFor(LampSlot.Top) == LampStateMapper.LampModuleState.InactiveColorHex,
+            "top slot must be inactive");
+        Assert(s.ColorFor(LampSlot.Bottom) == LampStateMapper.LampModuleState.InactiveColorHex,
+            "bottom slot must be inactive");
     }
 
-    private static async Task CardStackLayout_TwoCardsFit_NoOverlap()
+    private static async Task LampStateMapper_Running_BottomBlue()
     {
-        var p = CardStackLayout.Compute(new[] { 100.0, 100.0 }, safeTop: 64, safeBottom: 800, gap: 8);
-        Assert(p.Length == 2, "length");
-        Assert(p[0].Fits && p[1].Fits, "both cards fit in the safe area");
-        // Order is oldest-first, so index 0 is the OLDER card (top of stack),
-        // index 1 is the NEWER card (bottom of stack). Both must have
-        // distinct tops and the bottom card's bottom == safeBottom.
-        Assert(p[0].Top != p[1].Top, "tops must be distinct (no overlap)");
-        // Bottom card (newer, index 1): top = safeBottom - height = 700.
-        Assert(p[1].Top == 700, $"bottom card top = 700; got {p[1].Top}");
-        // Top card (older, index 0): top = 700 - gap - 100 = 592.
-        Assert(p[0].Top == 592, $"top card top = 592; got {p[0].Top}");
+        var s = LampStateMapper.ForStatus("running");
+        Assert(s.ActiveSlot == LampSlot.Bottom, $"running lights bottom slot; got {s.ActiveSlot}");
+        Assert(s.ActiveColorHex == "#2F81F7", $"running blue hex; got {s.ActiveColorHex}");
+        Assert(s.ColorFor(LampSlot.Top) == LampStateMapper.LampModuleState.InactiveColorHex,
+            "top slot must be inactive");
+        Assert(s.ColorFor(LampSlot.Middle) == LampStateMapper.LampModuleState.InactiveColorHex,
+            "middle slot must be inactive");
     }
 
-    private static async Task CardStackLayout_OverflowHidesOldestNotOverlap()
+    private static async Task LampStateMapper_Completed_BottomGreen()
     {
-        // Three 200-px cards. Safe band is [100, 800] -> 700 px usable.
-        // 3 * 200 + 2 * 8 gap = 616 px. The stack physically fits,
-        // but force a tighter safeTop so the oldest card overflows:
-        // safeTop = 300. Then top card (oldest, index 0) has its
-        // natural top at 800 - 3*200 - 2*8 = 184 < 300 -> overflow.
-        var p = CardStackLayout.Compute(
-            new[] { 200.0, 200.0, 200.0 },
-            safeTop: 300, safeBottom: 800, gap: 8);
-
-        Assert(p.Length == 3, "length");
-        Assert(!p[0].Fits, "oldest card overflows safeTop");
-        Assert(p[1].Fits && p[2].Fits, "newer cards still fit");
-
-        // Two cards that fit must NOT share the same top.
-        var fittingTops = new[] { p[1].Top, p[2].Top };
-        Assert(fittingTops[0] != fittingTops[1],
-            $"newer cards must not overlap; tops were {fittingTops[0]} and {fittingTops[1]}");
-
-        // The overflowed card's natural top is still reported; the
-        // caller is responsible for hiding it.
-        Assert(p[0].Top < 300, $"overflow card's natural top reported as {p[0].Top}");
+        var s = LampStateMapper.ForStatus("completed");
+        Assert(s.ActiveSlot == LampSlot.Bottom, $"completed lights bottom slot; got {s.ActiveSlot}");
+        Assert(s.ActiveColorHex == "#3FB950", $"completed green hex; got {s.ActiveColorHex}");
+        Assert(s.ColorFor(LampSlot.Top) == LampStateMapper.LampModuleState.InactiveColorHex,
+            "top slot must be inactive");
+        Assert(s.ColorFor(LampSlot.Middle) == LampStateMapper.LampModuleState.InactiveColorHex,
+            "middle slot must be inactive");
     }
 
-    private static async Task CardStackLayout_UnequalHeights_NoOverlapInvariant()
+    private static async Task LampStateMapper_RunningVsCompleted_ShareSlot_DifferColor()
     {
-        // Stronger version of NoOverlap: even with wildly different
-        // heights, no two FITTING cards may share a vertical region.
-        // The invariant we assert for every pair of adjacent fitting
-        // cards (in newest-to-oldest order) is:
-        //     older.Top + older.Height + gap <= newer.Top
-        // (i.e. there is at least `gap` pixels between the bottom of
-        // the older card and the top of the newer card; otherwise they
-        // visually overlap.) Same `top != top` is not enough — two
-        // cards could have different tops yet still collide when
-        // heights differ.
-        double[] heights = { 60, 180, 90, 200, 70, 150 };
-        const double safeTop = 0;
-        const double safeBottom = 900;
-        const double gap = 8;
+        // Round 3 invariant: the bottom physical slot is shared between
+        // running and completed. They differ ONLY in color.
+        var r = LampStateMapper.ForStatus("running");
+        var c = LampStateMapper.ForStatus("completed");
+        Assert(r.ActiveSlot == LampSlot.Bottom && c.ActiveSlot == LampSlot.Bottom,
+            "both running and completed must light the bottom physical slot");
+        Assert(r.ActiveColorHex != c.ActiveColorHex,
+            $"running ({r.ActiveColorHex}) and completed ({c.ActiveColorHex}) must have different colors");
+    }
 
-        var p = CardStackLayout.Compute(heights, safeTop, safeBottom, gap);
+    private static async Task LampStateMapper_UnknownStatusThrows()
+    {
+        var threw = false;
+        try { LampStateMapper.ForStatus("paused"); }
+        catch (ArgumentException) { threw = true; }
+        Assert(threw, "LampStateMapper.ForStatus must throw ArgumentException on 'paused'");
+    }
 
-        // Every card fits because the safe band is large enough.
-        for (int i = 0; i < p.Length; i++)
+    private static async Task LampStateMapper_AllFourStatuses_LightExactlyOneSlot()
+    {
+        // Exhaustive check: across all four Protocol v1 statuses, each
+        // lights exactly one physical slot. No fifth state. The non-
+        // active slots must use the inactive color, never some other
+        // color like gray/idle/offline/unknown.
+        var statuses = new[] { "running", "approval", "completed", "failed" };
+        var seenActiveSlots = new HashSet<LampSlot>();
+        foreach (var st in statuses)
         {
-            Assert(p[i].Fits, $"card[{i}] (height={heights[i]}) should fit in safe band; got Top={p[i].Top}");
+            var s = LampStateMapper.ForStatus(st);
+            seenActiveSlots.Add(s.ActiveSlot);
+            // All three slots must have a valid color, and the two
+            // non-active ones must be the inactive color.
+            for (int i = 0; i < 3; i++)
+            {
+                var slot = (LampSlot)i;
+                var c = s.ColorFor(slot);
+                Assert(c == "#F85149" || c == "#D29922" || c == "#2F81F7" || c == "#3FB950" || c == LampStateMapper.LampModuleState.InactiveColorHex,
+                    $"slot {slot} for status '{st}' returned unexpected color '{c}'");
+                if (slot != s.ActiveSlot)
+                {
+                    Assert(c == LampStateMapper.LampModuleState.InactiveColorHex,
+                        $"non-active slot {slot} for status '{st}' must be inactive, got {c}");
+                }
+            }
         }
+        // Top + Middle + Bottom all reachable; only one active per status.
+        Assert(seenActiveSlots.SetEquals(new[] { LampSlot.Top, LampSlot.Middle, LampSlot.Bottom }),
+            "all three physical slots must be reachable across the four statuses");
+    }
 
-        // Bottommost (newest, last index) card must sit at safeBottom.
-        var newest = p[p.Length - 1];
-        Assert(newest.Top + heights[heights.Length - 1] == safeBottom,
-            $"newest card bottom must equal safeBottom; got {newest.Top + heights[^1]}");
+    private static async Task CardStayPolicy_ApprovalIs8s()
+    {
+        var p = LampStateMapper.CardStayPolicy.ForStatus("approval");
+        Assert(p.StayMs == 8000, $"approval must be 8000ms; got {p.StayMs}");
+    }
 
-        // Walking newest -> oldest: each older card's natural bottom
-        // must be <= (newer card's top - gap).
-        for (int i = p.Length - 1; i >= 1; i--)
-        {
-            double olderTop = p[i - 1].Top;
-            double olderHeight = heights[i - 1];
-            double newerTop = p[i].Top;
-            double requiredGap = olderTop + olderHeight + gap;
-            Assert(requiredGap <= newerTop + 1e-9,
-                $"cards [{i-1}] (h={olderHeight}) and [{i}] (h={heights[i]}) overlap or touch; " +
-                $"older bottom = {olderTop + olderHeight}, required gap {gap}, newer top = {newerTop}");
-        }
+    private static async Task CardStayPolicy_CompletedIs5s()
+    {
+        var p = LampStateMapper.CardStayPolicy.ForStatus("completed");
+        Assert(p.StayMs == 5000, $"completed must be 5000ms; got {p.StayMs}");
+    }
+
+    private static async Task CardStayPolicy_FailedIs10s()
+    {
+        var p = LampStateMapper.CardStayPolicy.ForStatus("failed");
+        Assert(p.StayMs == 10000, $"failed must be 10000ms; got {p.StayMs}");
+    }
+
+    private static async Task CardStayPolicy_RunningIsNone()
+    {
+        var p = LampStateMapper.CardStayPolicy.ForStatus("running");
+        Assert(p.StayMs is null, $"running must be null (no card); got {p.StayMs}");
+    }
+
+    private static async Task CardStayPolicy_UnknownStatusThrows()
+    {
+        var threw = false;
+        try { LampStateMapper.CardStayPolicy.ForStatus("paused"); }
+        catch (ArgumentException) { threw = true; }
+        Assert(threw, "CardStayPolicy.ForStatus must throw on unknown status");
+    }
+
+    private static async Task IndicatorHost_FirstApproval_DispatchesSnapshotBeforeCard()
+    {
+        await Task.CompletedTask; // sync test
+
+        var order = new List<string>();
+        CardEvent? cardEvent = null;
+        using var host = new IndicatorHost(
+            onSnapshotReceived: sessions =>
+            {
+                order.Add($"snapshot:{sessions.Count}");
+                Assert(sessions.Count == 1, "snapshot callback should see the first session module");
+                Assert(sessions[0].SessionId == "s1", "snapshot callback session id");
+                Assert(sessions[0].Status == "approval", "snapshot callback status");
+            },
+            onCardEvent: ev =>
+            {
+                order.Add($"card:{ev.Kind}");
+                cardEvent = ev;
+            },
+            onPipeError: msg => throw new Exception(msg));
+
+        var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        host.ProcessSnapshot(new[] { Snap("s1", "approval", t0, message: "needs review") }, t0);
+
+        Assert(order.SequenceEqual(new[] { "snapshot:1", "card:Show" }),
+            $"expected snapshot before card Show; got [{string.Join(", ", order)}]");
+        Assert(cardEvent is not null, "first approval snapshot must deliver CardEvent.Show");
+        var delivered = cardEvent ?? throw new InvalidOperationException("missing card event");
+        Assert(delivered.Kind == CardEventKind.Show, $"expected Show, got {delivered.Kind}");
+        Assert(delivered.Session.SessionId == "s1", "card event session id");
+        Assert(delivered.AutoHideAfterMs == 8000,
+            $"approval CardEvent.Show AutoHideAfterMs must be 8000; got {delivered.AutoHideAfterMs}");
+    }
+
+    // ---- Round 3: AnchoredCardLayout collision adjustment ----
+
+    private static AnchoredCardInput Make(string sid, double centerY, double height)
+        => new() { SessionId = sid, ModuleCenterYScreen = centerY, Height = height };
+
+    private static async Task AnchoredCardLayout_Empty_NoCrash()
+    {
+        var p = AnchoredCardLayout.Compute(
+            Array.Empty<AnchoredCardInput>(),
+            safeTop: 100, safeBottom: 800, gap: 8);
+        Assert(p.Count == 0, "empty input yields empty placements");
+    }
+
+    private static async Task AnchoredCardLayout_SingleCard_NoOverlap()
+    {
+        var p = AnchoredCardLayout.Compute(
+            new[] { Make("a", centerY: 200, height: 100) },
+            safeTop: 100, safeBottom: 800, gap: 8);
+        Assert(p.Count == 1, "length");
+        Assert(p["a"].Visible, "single card fits");
+        // Natural top = centerY - height/2 = 150
+        Assert(p["a"].Top == 150, $"single card top = 150; got {p["a"].Top}");
+    }
+
+    private static async Task AnchoredCardLayout_TwoCards_NoOverlap()
+    {
+        // Both cards same height; their natural tops are far enough apart
+        // that no offset is needed.
+        var p = AnchoredCardLayout.Compute(
+            new[]
+            {
+                Make("upper", centerY: 250, height: 100), // natural top 200
+                Make("lower", centerY: 500, height: 100), // natural top 450
+            },
+            safeTop: 100, safeBottom: 800, gap: 8);
+
+        Assert(p.Count == 2, "length");
+        Assert(p["upper"].Visible && p["lower"].Visible, "both visible");
+        // Upper stays at natural (200), lower stays at natural (450).
+        Assert(p["upper"].Top == 200, $"upper top = 200; got {p["upper"].Top}");
+        Assert(p["lower"].Top == 450, $"lower top = 450; got {p["lower"].Top}");
+
+        // Pairwise invariant: every adjacent fitting pair has at least
+        // `gap` between bottom-of-older and top-of-newer.
+        var olderBottom = p["upper"].Top + 100;
+        Assert(olderBottom + 8 <= p["lower"].Top,
+            $"upper bottom ({olderBottom}) + gap (8) must be <= lower top ({p["lower"].Top})");
+    }
+
+    private static async Task AnchoredCardLayout_UnequalHeights_NoOverlap()
+    {
+        var p = AnchoredCardLayout.Compute(
+            new[]
+            {
+                Make("tall", centerY: 300, height: 200), // natural top 200, bottom 400
+                Make("short", centerY: 450, height: 80), // natural top 410, bottom 490
+            },
+            safeTop: 100, safeBottom: 800, gap: 8);
+
+        Assert(p.Count == 2, "length");
+        Assert(p["tall"].Visible && p["short"].Visible, "both visible");
+
+        // tall's natural top (200) is < short's natural top (410), so
+        // the layout puts tall first, then short. short must be at
+        // >= tall.bottom + gap = 400 + 8 = 408.
+        Assert(p["short"].Top >= 408,
+            $"short top ({p["short"].Top}) must be >= tall bottom + gap (408)");
+
+        // And short must still fit within safeBottom.
+        Assert(p["short"].Top + 80 <= 800,
+            $"short must fit in safe band; bottom = {p["short"].Top + 80}");
+    }
+
+    private static async Task AnchoredCardLayout_NaturalTopsOverlap_AutoOffset()
+    {
+        // Two cards whose natural regions overlap. With the newer-wins
+        // policy we process from newest to oldest: the newer (lower)
+        // card stays at its natural top, the older (upper) card is
+        // pushed UP. They must not overlap.
+        var p = AnchoredCardLayout.Compute(
+            new[]
+            {
+                Make("upper", centerY: 300, height: 200), // natural top 200, bottom 400 (older)
+                Make("lower", centerY: 350, height: 80),  // natural top 310, bottom 390 (newer)
+            },
+            safeTop: 100, safeBottom: 800, gap: 8);
+
+        Assert(p["upper"].Visible && p["lower"].Visible, "both visible");
+        // newer (lower) keeps natural top
+        Assert(p["lower"].Top == 310, $"newer keeps natural top 310; got {p["lower"].Top}");
+        // older (upper) is pushed up to clear the newer card + gap.
+        // maxTop for upper = 310 - 8 - 200 = 102 -> top clamped to 102.
+        Assert(p["upper"].Top == 102,
+            $"older pushed up to 102; got {p["upper"].Top}");
+        // Pairwise non-overlap: upper.bottom + gap <= lower.top.
+        Assert(p["upper"].Top + 200 + 8 <= p["lower"].Top,
+            $"upper bottom ({p["upper"].Top + 200}) + gap must be <= lower top ({p["lower"].Top})");
+    }
+
+    private static async Task AnchoredCardLayout_SafeTopSafeBottomClamp()
+    {
+        // Card with module center above safeTop -> natural top clamps to safeTop.
+        var p1 = AnchoredCardLayout.Compute(
+            new[] { Make("top", centerY: 50, height: 100) },
+            safeTop: 100, safeBottom: 800, gap: 8);
+        Assert(p1["top"].Top == 100, $"top clamp; got {p1["top"].Top}");
+        Assert(p1["top"].Visible, "still fits");
+
+        // Card with module center so low that natural top would push
+        // the card below safeBottom.
+        var p2 = AnchoredCardLayout.Compute(
+            new[] { Make("bottom", centerY: 1000, height: 100) },
+            safeTop: 100, safeBottom: 800, gap: 8);
+        Assert(p2["bottom"].Top == 700, $"bottom clamp; got {p2["bottom"].Top}");
+        Assert(p2["bottom"].Visible, "still fits");
+    }
+
+    private static async Task AnchoredCardLayout_NoRoom_HidesOlderNotNewer()
+    {
+        // Two cards whose combined heights + gap exceed the safe band
+    // when stacked. With newer-wins, the OLDER card (whose natural
+    // top is highest) gets pushed above safeTop and is hidden; the
+    // NEWER card stays at its natural position and is visible.
+        const double safeTop = 100;
+        const double safeBottom = 400;
+        const double gap = 10;
+        var p = AnchoredCardLayout.Compute(
+            new[]
+            {
+                // older (inserted first): natural top 110, height 200.
+                // newest (inserted last): natural top 250, height 200.
+                Make("older", centerY: 210, height: 200),
+                Make("newer", centerY: 350, height: 200),
+            },
+            safeTop: safeTop, safeBottom: safeBottom, gap: gap);
+
+        Assert(p.Count == 2, "length");
+        // newer (lower naturalTop = bottom of screen) wins and stays.
+        Assert(p["newer"].Visible, "newer card must be visible");
+        // newer sits at its clamped natural: natural = 250, 250+200=450 > safeBottom 400
+        // -> clamped to safeBottom - height = 200. newest card has no constraint above
+        // (no anyPlaced yet), so top = 200.
+        Assert(p["newer"].Top == 200, $"newer top clamped to 200; got {p["newer"].Top}");
+        // older is processed next; maxTop = newer.top - gap - height = 200 - 10 - 200 = -10.
+        // top = min(natural=110, maxTop=-10) = -10. -10 < safeTop 100 -> HIDDEN.
+        Assert(!p["older"].Visible, "older card must be hidden when no room");
     }
 }

@@ -6,43 +6,49 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 
 ---
 
-## 1. 状态灯
+## 1. 状态模块（红绿灯）
 
-桌面右上角按 `session_id` 一对一渲染状态灯，颜色严格对应四种状态：
+桌面右上角按 `session_id` 一对一渲染「红绿灯模块」：模块上方是 `agent` 名称标签，下方是竖向三个物理灯位的深色 housing。**一个 Agent Session = 一个独立模块**，不按 agent 字段聚合。
 
-| 状态        | 颜色 | hex       | 含义                       |
-| ----------- | ---- | --------- | -------------------------- |
-| `running`   | 🔵 蓝色 | `#2F81F7` | Agent 正在处理任务          |
-| `approval`  | 🟡 黄色 | `#D29922` | Agent 正在等待人工授权      |
-| `completed` | 🟢 绿色 | `#3FB950` | 本轮任务正常完成            |
-| `failed`    | 🔴 红色 | `#F85149` | 任务发生错误或异常终止      |
+三个物理灯位与四种状态的映射（唯一不变式：任意时刻**只有一个灯位亮起**）：
+
+| 状态        | 亮起灯位 | 颜色 | hex       | 含义                       |
+| ----------- | -------- | ---- | --------- | -------------------------- |
+| `failed`    | 顶部     | 🔴 红色 | `#F85149` | 任务发生错误或异常终止      |
+| `approval`  | 中间     | 🟡 黄色 | `#D29922` | Agent 正在等待人工授权      |
+| `running`   | 底部     | 🔵 蓝色 | `#2F81F7` | Agent 正在处理任务          |
+| `completed` | 底部     | 🟢 绿色 | `#3FB950` | 本轮任务正常完成            |
+
+注意 `running` 与 `completed` **共用底部物理灯位**、只是颜色不同 —— 共用的是"位置"，不是状态本身。未亮起的灯位保持极暗的灯罩色（`#34383D`），不消失、不变灰、不复用为其它含义。
 
 规则：
 
-- 一盏灯对应一个 `session_id`，不是对应一个 Agent 类型。
-- v1 严格只支持这四种颜色，**不引入灰色（offline / idle / unknown / paused）**。
-- `completed` 的颜色是绿色（不是灰色）。完成后的 Session 在状态灯列表中保留 5 分钟后自动移除（见 §3）。
-- 同一 `agent` 的多个 Session 在视觉上可以聚在一起（分组样式由 Indicator 决定）。
-- 状态灯 hover 显示 Tooltip：`agent · session_id · host`（host 可选）。Tooltip 是 `agent` 与 `host` 的函数；任一字段在后续快照中被替换，Tooltip 都随之刷新（whole-event replacement）。
+- 一个模块对应一个 `session_id`，不是对应一个 Agent 类型；同一 agent 的多个并发 session 会出现多个同名模块。
+- v1 严格只有上述四种亮起颜色，**不引入灰色（offline / idle / unknown / paused / connecting）第五状态**。
+- `completed` 的模块保留 5 分钟后自动移除（见 §3）。
+- 状态映射的 canonical 实现在 `Indicator.Core` 的 `LampStateMapper.ForStatus`，未知 status 直接抛异常（fail-fast）。
+- 模块 hover 显示 Tooltip：`agent · session_id · host`（host 可选）。Tooltip 是 `agent` 与 `host` 的函数；任一字段在后续快照中被替换，Tooltip 都随之刷新（whole-event replacement）。
 
 ## 2. 通知卡片
 
 | 状态        | 卡片行为                                                              |
 | ----------- | --------------------------------------------------------------------- |
-| `running`   | **不弹卡片**。只更新对应状态灯颜色。                                   |
-| `approval`  | **弹出卡片**，**持久显示**，直到状态离开 `approval`。                  |
-| `completed` | **弹出卡片**，展示最近一次的 `message`（如有）。卡片停留 **5 秒** 后自动隐藏。状态灯继续保留。 |
-| `failed`    | **弹出卡片**，展示 `message`（如有）。卡片停留 **10 秒** 后自动隐藏。状态灯长期保留。 |
+| `running`   | **不弹卡片**。只更新对应模块的灯位/颜色。                               |
+| `approval`  | **弹出卡片**，停留 **8 秒** 后自动收回；**黄色灯保持**直到状态变化。     |
+| `completed` | **弹出卡片**，展示最近一次的 `message`（如有）。卡片停留 **5 秒** 后自动收回。模块继续保留（5 分钟）。 |
+| `failed`    | **弹出卡片**，展示 `message`（如有）。卡片停留 **10 秒** 后自动收回。红色灯长期保留。 |
 
-时长（5 秒 / 10 秒）是 **UI 常量**，不属于 HTTP Protocol v1，可独立调整。
+时长（8 秒 / 5 秒 / 10 秒）是 **UI 常量**，不属于 HTTP Protocol v1，可独立调整。
 
 规则：
 
 - 卡片内容只读自 Receiver 已经更新的最新状态；Indicator 不重新解析历史。
 - 同一 Session 短时间内连续发生多次同向变化（例如 `running` → `running` 但 `message` 不同），默认行为是只更新最近一次的内容，不堆叠多张卡片。
 - `completed → running` 这种重新进入运行的合法流转，会按 `running` 的新规则处理（只更新灯，不弹卡片）。
-- 卡片从屏幕**右侧滑入**（滑入动画时长约 220 ms，属于 UI 常量）。
-- 卡片与状态灯均使用 `ShowActivated=False` + `WS_EX_NOACTIVATE`，**不抢占前台焦点**。
+- **卡片锚定在对应 Agent 模块的左侧**：从模块右侧的收回座位向左弹出（约 220 ms，EaseOut），垂直中心对齐模块中心，停留时长按状态；到期后**向右收回**到模块旁（约 200 ms，EaseIn）再隐藏。卡片消失 ≠ 状态消失，灯保持。
+- 停留期间状态变化（如 `approval → running`）：立即开始收回，不等剩余停留时间；若新状态本身要弹卡（如 `approval → failed`），复用同 session 的卡片更新内容并重新计时，**同一 session 永远只有一张卡片**。
+- 多个模块同时弹卡时按 `AnchoredCardLayout`（纯计算 helper）做碰撞调整：卡片尽量贴近各自模块，相互间保持间隙；空间不足时优先隐藏较旧的卡片。
+- 卡片与模块均使用 `ShowActivated=False` + `WS_EX_NOACTIVATE`，**不抢占前台焦点**。
 
 ## 3. completed 状态灯的自动清理
 
@@ -65,7 +71,7 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 ## 5. 去重 / 重发
 
 - 同一 `(session_id, updated_at)` 的卡片**最多弹出一次**：如果 Receiver 重启或重发同一快照，不会重复弹卡片。
-- 同一 Session 收到**更新**的 `updated_at` 时，按新事件重新触发对应行为：approval/failed 更新卡片内容；completed 重新弹出 5 秒卡片。
+- 同一 Session 收到**更新**的 `updated_at` 时，按新事件重新触发 `Show`：approval 重置 8 秒停留、failed 重置 10 秒停留、completed 重新弹出 5 秒卡片。
 - 这是 UI 层的去重，不是协议层的语义。协议层不保证 `updated_at` 单调，只保证 last-received-wins。
 
 ### 5.1 completed 灯的“墓碑”抑制（Round 2 收尾）
@@ -94,14 +100,14 @@ Protocol v1 已经约束 `status` 只能是 `running / approval / completed / fa
 
 Indicator 的 Core 层作为防御性约束再次校验：构造 `SessionViewModel` 时传入未知 `status` 会**直接抛出 `ArgumentException`**（fail-fast），不会创建第五种灯、不会映射为灰色。这是 Core 层与 WPF 视觉层共用的约束，不允许在 UI 视觉层静默吞掉未知状态。
 
-## 8. 卡片自动隐藏 timer 的管理
+## 8. 卡片停留 timer 的管理
 
-卡片自动隐藏的 timer 必须按 `session_id` 持有，最多每 session 一个：
+卡片停留（到期收回）的 timer 必须按 `session_id` 持有，最多每 session 一个：
 
-- 收到同一 session 的新 `Show`：先取消旧 timer，再注册新 timer（这是 `completed` 5s 之后 `failed` 10s 的过渡能正确生效的前提）。
-- 收到同 session 的 `Hide`：取消该 session 的 timer。
-- 收到同 session 的 `Update`（approval 内容变化）：**不动** timer，原 Show 的隐藏计划仍然有效。
-- approval `Show`（无 `AutoHideAfterMs`）：确保旧 timer 已被取消，不创建新 timer。
+- 收到同一 session 的新 `Show`（含 approval / completed / failed 三种，以及同状态 `updated_at` 推进后的重新 Show）：先取消旧 timer，再注册新 timer —— 这是 `completed` 5s 之后紧接 `failed` 10s 能正确生效的前提。
+- `running` 的 `Show` 不携带停留时长（无卡片）：确保旧 timer 已被取消，不创建新 timer；若该 session 有卡片正在显示则立即收回。
+- 收到同 session 的 `Hide`（状态离开卡片状态、或 authoritative snapshot 删除 session）：取消 timer 并收回/隐藏卡片。
 - timer 回调里要自检“我是不是该 session 仍然登记的 timer”，防止被替换的旧 callback 误杀新卡片。
+- 卡片收回动画（~200 ms）完成时通过 `RetractCompleted` 事件通知 MainWindow 清理登记；清理时做 instance-safe 检查，防止被替换的旧卡片迟到事件误删新卡片。
 
-WPF DispatcherTimer 本身不做单元测试；上述语义在 Core 层有等价的 hidden-tombstone / dedup 行为覆盖测试。
+WPF DispatcherTimer / 动画本身不做单元测试；上述语义在 Core 层有等价的 dedup / stay-policy / tombstone 行为覆盖测试。

@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Media;
 using System.Windows.Media.Animation;
 using AgentBeacon.Indicator.Core;
 
@@ -7,7 +6,53 @@ namespace AgentBeacon.Indicator;
 
 public partial class CardWindow : Window
 {
+    /// <summary>
+    /// Lifecycle state of a CardWindow. Drives whether the card is
+    /// visible, whether a retract animation is in flight, and whether a
+    /// new Show event can re-trigger slide-out.
+    /// </summary>
+    public enum CardPhase
+    {
+        /// <summary>Card has never been shown or has been fully torn down.</summary>
+        Hidden,
+        /// <summary>Slide-out animation is in progress (from retracted seat to anchor).</summary>
+        Showing,
+        /// <summary>Slide-out completed; the card is parked at the anchor; stay timer ticking.</summary>
+        Visible,
+        /// <summary>Slide-back animation is in progress (from anchor back to retracted seat).</summary>
+        Retracting,
+    }
+
     public string SessionId { get; private set; } = "";
+
+    /// <summary>
+    /// Anchor position the card is currently sitting at / sliding to.
+    /// Maintained by <see cref="MainWindow.AnchorCardOnModule"/> so the
+    /// animation system can use it as the "rest" state.
+    /// </summary>
+    public double TargetLeft { get; set; }
+    public double TargetTop { get; set; }
+
+    /// <summary>
+    /// "Hidden" seat — just past the right edge of the lamp module.
+    /// The card sits here when not shown. Slide-out moves LEFT to
+    /// <see cref="TargetLeft"/>; slide-back moves RIGHT back here.
+    /// </summary>
+    public double RetractLeft { get; private set; }
+
+    private CardPhase _phase = CardPhase.Hidden;
+    public CardPhase Phase => _phase;
+
+    /// <summary>
+    /// Fires when a slide-back animation completes (or is short-circuited
+    /// via <see cref="RetractImmediate"/>). The MainWindow subscribes
+    /// per-card and is responsible for removing this card from its
+    /// <c>_cards</c> dictionary. We do NOT remove ourselves here because
+    /// we want a single, instance-safe ownership check at the consumer
+    /// (a stale card must not be allowed to evict a freshly-created
+    /// replacement for the same session).
+    /// </summary>
+    public event EventHandler? RetractCompleted;
 
     public CardWindow()
     {
@@ -18,72 +63,30 @@ public partial class CardWindow : Window
     {
         SessionId = vm.SessionId;
         AgentText.Text = vm.Agent;
-        HostText.Text = vm.Host ?? "";
-        HostText.Visibility = string.IsNullOrEmpty(vm.Host) ? Visibility.Collapsed : Visibility.Visible;
         StatusText.Text = vm.Status.ToUpperInvariant();
+        StatusText.Foreground = StatusBrush(vm.Status);
         MessageText.Text = vm.Message ?? "";
         MessageText.Visibility = string.IsNullOrEmpty(vm.Message) ? Visibility.Collapsed : Visibility.Visible;
-        SessionIdText.Text = vm.SessionId;
-        StatusDot.Fill = new SolidColorBrush(
-            (Color)ColorConverter.ConvertFromString(vm.LampColor));
+        SessionIdText.Text = "session: " + vm.SessionId;
+        HostText.Text = string.IsNullOrEmpty(vm.Host) ? "" : "host: " + vm.Host;
+        HostText.Visibility = string.IsNullOrEmpty(vm.Host) ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    /// <summary>
-    /// Slide the card in from off-screen right. The animation is a one-shot
-    /// tween from "off-screen-right" to <paramref name="targetLeft"/>, with
-    /// the window's base Left pre-set to <paramref name="targetLeft"/> so
-    /// that once the animation finishes the window rests exactly at the
-    /// target position.
-    ///
-    /// On the animation's Completed event we detach it via
-    /// BeginAnimation(LeftProperty, null) and pin <c>Left = targetLeft</c>.
-    /// We do NOT touch <c>Top</c> in Completed: LayoutCards
-    /// (<see cref="MainWindow.LayoutCards"/>) is the single source of
-    /// truth for vertical position, and it may legitimately have moved
-    /// <c>Top</c> during the 220 ms animation window if another Show /
-    /// Hide / SizeChanged arrived. Re-pinning <c>Top</c> here with a value
-    /// captured 220 ms earlier would clobber the latest layout.
-    /// </summary>
-    public void SlideInFromRight(double targetLeft, double targetTop)
+    private static System.Windows.Media.Brush StatusBrush(string status) => status switch
     {
-        Top = targetTop;
-        // Base value = final target. Animation From = off-screen-right.
-        // After FillBehavior.Stop the property falls back to the base,
-        // which is now the intended final position.
-        Left = targetLeft;
-        // Make sure no stale animation is still attached (defensive — only
-        // first Show runs this, but the card object can be reused after
-        // Hide via ShowOrUpdateCard paths).
-        BeginAnimation(LeftProperty, null);
-        ShowNoActivate();
-
-        var anim = new DoubleAnimation
-        {
-            From = targetLeft + ActualWidth,
-            To = targetLeft,
-            Duration = TimeSpan.FromMilliseconds(IndicatorUiConstants.SlideInDurationMs),
-            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
-            FillBehavior = FillBehavior.Stop,
-        };
-        anim.Completed += (_, _) =>
-        {
-            // Detach the animation so future LayoutCards writes to Left
-            // take effect immediately (FillBehavior.Stop would otherwise
-            // keep the animation "applied" and intercept subsequent
-            // writes), and pin Left = targetLeft so the final on-screen
-            // position matches the seat LayoutCards computed at slide
-            // start. We deliberately do not re-pin Top here: see the
-            // xmldoc above.
-            BeginAnimation(LeftProperty, null);
-            Left = targetLeft;
-        };
-        BeginAnimation(LeftProperty, anim);
-    }
+        "failed" => System.Windows.Media.Brushes.IndianRed,
+        "approval" => System.Windows.Media.Brushes.Khaki,
+        "completed" => System.Windows.Media.Brushes.LightGreen,
+        "running" => System.Windows.Media.Brushes.LightSkyBlue,
+        _ => throw new ArgumentException(
+            $"unknown AgentBeacon status '{status}'; expected running/approval/completed/failed",
+            nameof(status)),
+    };
 
     /// <summary>
     /// Show without stealing focus from the foreground app. We use
-    /// ShowActivated=False (set in XAML) plus a no-activate Win32 style on
-    /// the HWND for robustness against apps like Terminal / VS Code.
+    /// ShowActivated=False (set in XAML) plus a no-activate Win32 style
+    /// on the HWND for robustness against apps like Terminal / VS Code.
     /// </summary>
     public void ShowNoActivate()
     {
@@ -91,8 +94,200 @@ public partial class CardWindow : Window
         NoActivateHelper.EnsureNoActivate(this);
     }
 
-    public new void Hide()
+    /// <summary>
+    /// Measure the card so ActualWidth / ActualHeight are valid. Called
+    /// by MainWindow right after construction; we place the card offscreen
+    /// at Left = -10000 / Top = -10000, ShowNoActivate it, then UpdateLayout
+    /// to force measure before the caller computes the anchor.
+    /// </summary>
+    public void MeasureOffscreen()
     {
-        base.Hide();
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = -10000;
+        Top = -10000;
+        ShowNoActivate();
+        UpdateLayout();
+    }
+
+    /// <summary>
+    /// Slide the card OUT from off-screen right (just past the lamp
+    /// module's right edge) to its anchor position to the LEFT of the
+    /// module.
+    ///
+    /// WPF base-value semantics: we set the WINDOW's base Left to
+    /// <paramref name="targetLeft"/> (the final position), then animate
+    /// From = <paramref name="retractLeft"/> (start position) To =
+    /// <paramref name="targetLeft"/>. With FillBehavior.Stop the
+    /// animated value reverts to the base after the animation, i.e.
+    /// back to targetLeft — exactly where we want to land.
+    /// </summary>
+    public void SlideOutFromRightOfModule(
+        double targetLeft,
+        double targetTop,
+        double retractLeft)
+    {
+        TargetLeft = targetLeft;
+        TargetTop = targetTop;
+        RetractLeft = retractLeft;
+        // Detach any in-flight animation so the new base value is not
+        // ignored.
+        BeginAnimation(LeftProperty, null);
+
+        // Base value = final target. After the animation ends with
+        // FillBehavior.Stop the property reverts to this base.
+        Left = targetLeft;
+        Top = targetTop;
+
+        _phase = CardPhase.Showing;
+        ShowNoActivate();
+
+        var anim = new DoubleAnimation
+        {
+            From = retractLeft,
+            To = targetLeft,
+            Duration = TimeSpan.FromMilliseconds(IndicatorUiConstants.CardSlideOutDurationMs),
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop,
+        };
+        anim.Completed += (_, _) =>
+        {
+            // Animation ended; revert to base. If a new Show has
+            // happened during the animation (state Show-during-SlideOut),
+            // the new SlideOutFromRightOfModule call already detached
+            // this animation and set a fresh base; reaching here just
+            // means the original animation finished and the card is now
+            // at base = targetLeft. We promote phase to Visible.
+            BeginAnimation(LeftProperty, null);
+            if (_phase == CardPhase.Showing) _phase = CardPhase.Visible;
+        };
+        BeginAnimation(LeftProperty, anim);
+    }
+
+    /// <summary>
+    /// Re-show this card from its authoritative retracted seat. Used when
+    /// a new Show event arrives for an existing card, including the
+    /// approval -> running -> failed case where a retract animation may
+    /// already be in flight.
+    /// </summary>
+    public void RestartShow(
+        double targetLeft,
+        double targetTop,
+        double retractLeft,
+        bool animate)
+    {
+        TargetLeft = targetLeft;
+        TargetTop = targetTop;
+        RetractLeft = retractLeft;
+
+        BeginAnimation(LeftProperty, null);
+
+        if (animate || _phase == CardPhase.Hidden || _phase == CardPhase.Retracting || !IsVisible)
+        {
+            SlideOutFromRightOfModule(targetLeft, targetTop, retractLeft);
+            return;
+        }
+
+        Left = targetLeft;
+        Top = targetTop;
+        _phase = CardPhase.Visible;
+        ShowNoActivate();
+    }
+
+    /// <summary>
+    /// Update this card's anchor after module layout changes. This keeps
+    /// ordinary reflow separate from Show/re-show lifecycle transitions.
+    /// </summary>
+    public void ReanchorTo(
+        double targetLeft,
+        double targetTop,
+        double retractLeft)
+    {
+        TargetLeft = targetLeft;
+        TargetTop = targetTop;
+        RetractLeft = retractLeft;
+
+        if (_phase == CardPhase.Hidden || !IsVisible)
+        {
+            SlideOutFromRightOfModule(targetLeft, targetTop, retractLeft);
+            return;
+        }
+
+        if (_phase == CardPhase.Retracting)
+        {
+            return;
+        }
+
+        BeginAnimation(LeftProperty, null);
+        Left = targetLeft;
+        Top = targetTop;
+        _phase = CardPhase.Visible;
+    }
+
+    /// <summary>
+    /// Slide the card BACK to its retracted seat (just past the lamp
+    /// module's right edge) and Hide() on completion. Idempotent — if
+    /// the card is already hidden or already retracting, this is a no-op
+    /// or no-ops smoothly.
+    /// </summary>
+    public void SlideBackToRightOfModule()
+    {
+        if (!IsVisible) return;
+        if (_phase == CardPhase.Retracting) return;
+
+        double retractLeft = RetractLeft;
+        double currentLeft = Left;
+        // Already at or past the retract seat -> skip the animation and
+        // tear down synchronously. Avoids a no-op animation when the
+        // card is already at the seat (e.g. multiple consecutive
+        // ForceRetractCard calls).
+        if (currentLeft >= retractLeft - 1)
+        {
+            FinishRetract();
+            return;
+        }
+
+        _phase = CardPhase.Retracting;
+        BeginAnimation(LeftProperty, null);
+
+        // Base Left = retracted seat so that any mid-animation rebase
+        // (e.g. Show during retract in MainWindow) lands correctly.
+        Left = retractLeft;
+
+        var anim = new DoubleAnimation
+        {
+            From = currentLeft,
+            To = retractLeft,
+            Duration = TimeSpan.FromMilliseconds(IndicatorUiConstants.CardSlideBackDurationMs),
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn },
+            FillBehavior = FillBehavior.Stop,
+        };
+        anim.Completed += (_, _) =>
+        {
+            BeginAnimation(LeftProperty, null);
+            FinishRetract();
+        };
+        BeginAnimation(LeftProperty, anim);
+    }
+
+    /// <summary>
+    /// Tear down the card without playing the slide-back animation.
+    /// Used by authoritative removal where we want the module AND
+    /// card gone immediately. We still fire <see cref="RetractCompleted"/>
+    /// so the MainWindow cleans up its dictionary.
+    /// </summary>
+    public void RetractImmediate()
+    {
+        if (_phase == CardPhase.Hidden) return;
+        BeginAnimation(LeftProperty, null);
+        Hide();
+        FinishRetract();
+    }
+
+    private void FinishRetract()
+    {
+        BeginAnimation(LeftProperty, null);
+        Hide();
+        _phase = CardPhase.Hidden;
+        try { RetractCompleted?.Invoke(this, EventArgs.Empty); } catch { /* swallow */ }
     }
 }

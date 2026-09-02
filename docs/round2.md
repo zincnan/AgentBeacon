@@ -1,5 +1,13 @@
 # Round 2 — Windows Indicator (minimal viable)
 
+> **Historical note (Round 3)**: the UI rules and architecture described
+> below reflect Round 2 as shipped. Round 3 redesigned the Indicator UI
+> into traffic-light modules (`LampModuleView` + `LampStateMapper`) with
+> module-anchored cards (`AnchoredCardLayout`); approval cards now
+> auto-retract after 8 s. See `docs/ui-policy.md` for the canonical
+> current rules and the README for current test totals. The IPC design
+> in this document is still accurate.
+
 This document extends `architecture.md` with the Windows-side Indicator
 introduced in Round 2. The HTTP Protocol v1 contract documented in
 `protocol.md` is **unchanged**. The Agent → Receiver wire format documented in
@@ -44,8 +52,9 @@ Per the kickoff scope:
   NOT an Adapter — it's a generic status-reporting CLI that only knows
   how to POST a `(session_id, agent, status, message?, host?)` envelope
   to the Receiver. Each Agent Runtime (Claude Code, OpenCode, Codex,
-  proprietary) needs its own Adapter; Round 3 will land the first one
-  (Claude Code).
+  proprietary) needs its own Adapter; Round 4 is planned to land the
+  first one (Claude Code) — Round 3 was used for the Indicator
+  traffic-light UI redesign.
 * Windows Service / installer / auto-start.
 * Any change to Protocol v1 or `agent-notify.py`.
 * Cross-platform Indicator (macOS / Linux). v1 Indicator is Windows-only.

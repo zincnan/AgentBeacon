@@ -36,6 +36,9 @@ namespace AgentBeacon.Indicator.Core;
 /// </summary>
 public sealed class SessionViewModelStore
 {
+    /// <summary>Card visibility duration for "approval".</summary>
+    public static readonly TimeSpan ApprovalCardDuration = TimeSpan.FromSeconds(8);
+
     /// <summary>Card visibility duration for "completed".</summary>
     public static readonly TimeSpan CompletedCardDuration = TimeSpan.FromSeconds(5);
 
@@ -267,17 +270,31 @@ public sealed class SessionViewModelStore
                 break;
 
             case IndicatorStatus.Approval:
-                // Persistent card: stays visible until status leaves approval.
+                // Card auto-retracts after 8s; lamp stays lit until
+                // status leaves approval.
+                //   - prev status != approval           -> fresh Show
+                //   - prev approval, updated_at changed -> re-Show with new stay timer
+                //   - prev approval, updated_at same    -> no event (dedup)
                 if (prevStatus != IndicatorStatus.Approval)
                 {
                     _lastCardShownStatus[vm.SessionId] = vm.Status;
                     _lastCardShownUpdatedAt[vm.SessionId] = vm.UpdatedAt;
-                    CardEvent?.Invoke(new CardEvent { Kind = CardEventKind.Show, Session = vm });
+                    CardEvent?.Invoke(new CardEvent
+                    {
+                        Kind = CardEventKind.Show,
+                        Session = vm,
+                        AutoHideAfterMs = (int)ApprovalCardDuration.TotalMilliseconds,
+                    });
                 }
                 else if (prevUpdatedAt != vm.UpdatedAt)
                 {
                     _lastCardShownUpdatedAt[vm.SessionId] = vm.UpdatedAt;
-                    CardEvent?.Invoke(new CardEvent { Kind = CardEventKind.Update, Session = vm });
+                    CardEvent?.Invoke(new CardEvent
+                    {
+                        Kind = CardEventKind.Show,
+                        Session = vm,
+                        AutoHideAfterMs = (int)ApprovalCardDuration.TotalMilliseconds,
+                    });
                 }
                 break;
 
