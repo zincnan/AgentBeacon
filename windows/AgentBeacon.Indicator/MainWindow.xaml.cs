@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using AgentBeacon.Indicator.Core;
 using AgentBeacon.Shared;
@@ -42,6 +43,24 @@ public partial class MainWindow : Window
     /// </summary>
     private readonly Dictionary<string, double> _moduleCenterYScreen = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Right-click dismissal watermarks: session_id → the updated_at of
+    /// the last event the user chose to hide. The lamp is rebuilt only
+    /// when the session produces a strictly newer event
+    /// (<see cref="LampDismissal.ShouldShow"/>).
+    /// </summary>
+    private readonly Dictionary<string, DateTimeOffset> _dismissedAt = new(StringComparer.Ordinal);
+
+    /// <summary>Last updated_at per session, refreshed on every snapshot.</summary>
+    private readonly Dictionary<string, DateTimeOffset> _sessionUpdatedAt = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// True once the user has dragged the indicator column somewhere:
+    /// stops the automatic snap-back to the right edge. Resets when the
+    /// process exits (position is not persisted to disk).
+    /// </summary>
+    private bool _userMoved;
+
     private readonly DispatcherTimer _tickTimer;
     private bool _layoutRefreshQueued;
 
@@ -52,11 +71,23 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) => NoActivateHelper.EnsureNoActivate(this);
 
         SnapToRightEdge();
-        SizeChanged += (_, _) =>
+        SizeChanged += (_, e) =>
         {
-            SnapToRightEdge();
+            if (_userMoved)
+            {
+                // Keep the right edge where the user dragged it while
+                // SizeToContent grows/shrinks the window.
+                this.Left += e.PreviousSize.Width - e.NewSize.Width;
+            }
+            else
+            {
+                SnapToRightEdge();
+            }
             QueueLayoutRefresh();
         };
+        // Cards are anchored to module SCREEN positions; when the whole
+        // window moves (drag), they must follow.
+        LocationChanged += (_, _) => QueueLayoutRefresh();
 
         _tickTimer = new DispatcherTimer
         {
@@ -123,15 +154,34 @@ public partial class MainWindow : Window
             if (_modules.TryGetValue(id, out var m)) ModuleStack.Children.Remove(m);
             _modules.Remove(id);
             _moduleCenterYScreen.Remove(id);
+            _sessionUpdatedAt.Remove(id);
+            _dismissedAt.Remove(id);
             ForceRetractCard(id, immediate: true);
         }
 
-        // Step 2: update or insert modules in snapshot order. The
+        // Step 2: filter right-click-dismissed lamps. A dismissed lamp
+        // only comes back when its session produces a strictly NEWER
+        // event than the one the user hid (LampDismissal.ShouldShow);
+        // a full-snapshot re-broadcast of the same event stays hidden.
+        var shown = new List<SessionViewModel>(sessions.Count);
+        foreach (var s in sessions)
+        {
+            _sessionUpdatedAt[s.SessionId] = s.UpdatedAt;
+            if (_dismissedAt.TryGetValue(s.SessionId, out var dismissedAt)
+                && !LampDismissal.ShouldShow(dismissedAt, s.UpdatedAt))
+            {
+                continue; // still dismissed
+            }
+            _dismissedAt.Remove(s.SessionId); // reactivated by newer event
+            shown.Add(s);
+        }
+
+        // Step 3: update or insert modules in snapshot order. The
         // bottom margin on every module except the last supplies the
         // ModuleGap vertical spacing.
-        for (int i = 0; i < sessions.Count; i++)
+        for (int i = 0; i < shown.Count; i++)
         {
-            var s = sessions[i];
+            var s = shown[i];
             if (!_modules.TryGetValue(s.SessionId, out var module))
             {
                 module = new LampModuleView
@@ -140,7 +190,10 @@ public partial class MainWindow : Window
                     TooltipText = s.TooltipText,
                     ActiveSlot = LampStateMapper.ForStatus(s.Status).ActiveSlot,
                     BottomColorHex = LampStateMapper.ForStatus(s.Status).ActiveColorHex,
+                    SessionId = s.SessionId,
                 };
+                module.Dismissed += OnModuleDismissed;
+                module.MouseLeftButtonDown += Module_MouseLeftButtonDown;
                 ModuleStack.Children.Insert(i, module);
                 _modules[s.SessionId] = module;
             }
@@ -160,7 +213,7 @@ public partial class MainWindow : Window
             }
 
             module.Margin = new Thickness(0, 0, 0,
-                i == sessions.Count - 1 ? 0 : IndicatorUiConstants.ModuleGap);
+                i == shown.Count - 1 ? 0 : IndicatorUiConstants.ModuleGap);
         }
 
         // Step 3: cache module center Y (screen coords) for every live
@@ -183,6 +236,50 @@ public partial class MainWindow : Window
             var relative = module.TransformToAncestor(this).Transform(new Point(0, 0));
             var moduleTopOnScreen = this.Top + relative.Y;
             _moduleCenterYScreen[kv.Key] = moduleTopOnScreen + module.ActualHeight / 2.0;
+        }
+    }
+
+    /// <summary>
+    /// User picked 关闭此灯 on a module's context menu: tear the module
+    /// down entirely (no hidden window kept), retract its card, and
+    /// record the dismissal watermark. The lamp is rebuilt from scratch
+    /// only when this session produces a newer event.
+    /// </summary>
+    private void OnModuleDismissed(object? sender, EventArgs e)
+    {
+        if (sender is not LampModuleView module || module.SessionId is not { } sessionId)
+        {
+            return;
+        }
+        _dismissedAt[sessionId] = _sessionUpdatedAt.TryGetValue(sessionId, out var updatedAt)
+            ? updatedAt
+            : DateTimeOffset.UtcNow;
+        ForceRetractCard(sessionId, immediate: true);
+        ModuleStack.Children.Remove(module);
+        _modules.Remove(sessionId);
+        _moduleCenterYScreen.Remove(sessionId);
+        QueueLayoutRefresh();
+    }
+
+    /// <summary>
+    /// Drag any lamp module to move the whole indicator column. The
+    /// window stops auto-snapping to the right edge afterwards and the
+    /// cards follow (LocationChanged → QueueLayoutRefresh).
+    /// </summary>
+    private void Module_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState != MouseButtonState.Pressed)
+        {
+            return;
+        }
+        try
+        {
+            _userMoved = true;
+            DragMove();
+        }
+        catch (InvalidOperationException)
+        {
+            // DragMove without a pressed button — ignore.
         }
     }
 
@@ -350,6 +447,8 @@ public partial class MainWindow : Window
         _cardTimers.Clear();
         _modules.Clear();
         _moduleCenterYScreen.Clear();
+        _sessionUpdatedAt.Clear();
+        _dismissedAt.Clear();
         ModuleStack.Children.Clear();
     }
 

@@ -111,3 +111,16 @@ Indicator 的 Core 层作为防御性约束再次校验：构造 `SessionViewMod
 - 卡片收回动画（~200 ms）完成时通过 `RetractCompleted` 事件通知 MainWindow 清理登记；清理时做 instance-safe 检查，防止被替换的旧卡片迟到事件误删新卡片。
 
 WPF DispatcherTimer / 动画本身不做单元测试；上述语义在 Core 层有等价的 dedup / stay-policy / tombstone 行为覆盖测试。
+
+## 9. 灯的右键关闭与拖拽（Round 5）
+
+**右键关闭（dismiss）**：右键任意灯模块 →「关闭此灯」。该模块被**完全拆除**（不保留隐藏窗口，省资源），同时收回其卡片、取消 timer。
+
+- 关闭时记录一条水位：`(session_id, 被隐藏事件的 updated_at)`（`LampDismissal.ShouldShow` 为 canonical 规则）。
+- 之后收到**同一 `(session_id, updated_at)`** 的重发（如别的会话触发 full snapshot 重播）：灯**不复活** —— 与 completed 墓碑同一防复活原则。
+- 收到**严格更新**的 `updated_at`（会话又活了、有新信号）：灯**重建**，按新状态正常显示；若新状态带卡片，卡片正常弹出（快照先于卡片事件送达，锚点模块已就位）。
+- 红灯被关闭后，该 session 用 `-c` 继续产生新事件 → 灯重建为新状态（红→蓝/绿…）。
+
+**拖拽**：按住左键拖动任意灯模块可移动整个灯列。一旦拖过，Indicator 不再自动贴回屏幕右缘（窗口增减模块时保持右缘对齐）；位置保持到进程退出，不落盘持久化。拖动后卡片随模块新位置重新锚定。
+
+两者都不改协议：dismiss 是 Indicator 本地 UI 状态，Receiver 状态表不变。

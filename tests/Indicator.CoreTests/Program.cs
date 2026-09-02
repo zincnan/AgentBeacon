@@ -82,6 +82,11 @@ public static class Program
             ("CardStayPolicy_FailedIs10s",                        CardStayPolicy_FailedIs10s),
             ("CardStayPolicy_RunningIsNone",                      CardStayPolicy_RunningIsNone),
             ("CardStayPolicy_UnknownStatusThrows",                CardStayPolicy_UnknownStatusThrows),
+
+            // Round 5 — right-click lamp dismissal watermark
+            ("LampDismissal_NeverDismissed_Shows",                LampDismissal_NeverDismissed_Shows),
+            ("LampDismissal_SameOrOlderEvent_StaysHidden",        LampDismissal_SameOrOlderEvent_StaysHidden),
+            ("LampDismissal_NewerEvent_Reactivates",              LampDismissal_NewerEvent_Reactivates),
             ("IndicatorHost_FirstApproval_DispatchesSnapshotBeforeCard",
                                                               IndicatorHost_FirstApproval_DispatchesSnapshotBeforeCard),
 
@@ -1076,6 +1081,32 @@ public static class Program
         try { LampStateMapper.CardStayPolicy.ForStatus("paused"); }
         catch (ArgumentException) { threw = true; }
         Assert(threw, "CardStayPolicy.ForStatus must throw on unknown status");
+    }
+
+    // ---- Round 5: right-click lamp dismissal watermark ----
+
+    private static async Task LampDismissal_NeverDismissed_Shows()
+    {
+        var t0 = new DateTimeOffset(2026, 9, 2, 12, 0, 0, TimeSpan.Zero);
+        Assert(LampDismissal.ShouldShow(null, t0), "never-dismissed lamp always shows");
+    }
+
+    private static async Task LampDismissal_SameOrOlderEvent_StaysHidden()
+    {
+        var t0 = new DateTimeOffset(2026, 9, 2, 12, 0, 0, TimeSpan.Zero);
+        // Re-broadcast of the exact event the user hid → still hidden.
+        Assert(!LampDismissal.ShouldShow(t0, t0),
+            "same updated_at re-broadcast must not resurrect a dismissed lamp");
+        // Older event → still hidden.
+        Assert(!LampDismissal.ShouldShow(t0, t0.AddSeconds(-5)),
+            "older updated_at must not resurrect a dismissed lamp");
+    }
+
+    private static async Task LampDismissal_NewerEvent_Reactivates()
+    {
+        var t0 = new DateTimeOffset(2026, 9, 2, 12, 0, 0, TimeSpan.Zero);
+        Assert(LampDismissal.ShouldShow(t0, t0.AddSeconds(1)),
+            "strictly newer updated_at reactivates the lamp");
     }
 
     private static async Task IndicatorHost_FirstApproval_DispatchesSnapshotBeforeCard()

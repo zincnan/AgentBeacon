@@ -32,6 +32,13 @@
                    Bottom="{x:Static local:IndicatorUiConstants.LightGap}"/>
     </UserControl.Resources>
 
+    <UserControl.ContextMenu>
+        <ContextMenu>
+            <MenuItem x:Name="DismissItem"
+                      Header="关闭此灯（该会话有新状态时自动恢复）"/>
+        </ContextMenu>
+    </UserControl.ContextMenu>
+
     <StackPanel Orientation="Vertical" HorizontalAlignment="Center" VerticalAlignment="Top">
         <Border Style="{StaticResource AgentLabelStyle}"
                 ToolTip="{Binding TooltipText}"

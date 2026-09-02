@@ -72,6 +72,21 @@ public partial class LampModuleView : UserControl
         set => SetValue(BottomColorHexProperty, value);
     }
 
+    /// <summary>
+    /// Owning session id. Set by MainWindow when the module is created;
+    /// used to route the dismiss (right-click → 关闭此灯) action back to
+    /// the right session.
+    /// </summary>
+    public string? SessionId { get; set; }
+
+    /// <summary>
+    /// Raised when the user picks "关闭此灯" in the module's context
+    /// menu. MainWindow tears the module down and records a dismissal
+    /// watermark; the lamp is only rebuilt when the session produces a
+    /// newer event.
+    /// </summary>
+    public event EventHandler? Dismissed;
+
     public LampModuleView()
     {
         InitializeComponent();
@@ -82,6 +97,13 @@ public partial class LampModuleView : UserControl
         {
             ToolTip = TooltipText;
             RefreshLights();
+        };
+        DismissItem.Click += (_, _) =>
+        {
+            if (SessionId is not null)
+            {
+                Dismissed?.Invoke(this, EventArgs.Empty);
+            }
         };
     }
 
