@@ -1,160 +1,153 @@
 # AgentBeacon
 
-AgentBeacon 是一个面向 Windows 桌面的 AI Agent 实时状态提示系统。
+> 你的 AI Agent 们，在你 Windows 桌面右上角的一排"红绿灯"。
 
-它把本地或远端主机上正在运行的各个 AI Session 的当前状态，以轻量、无侵入的形式汇报到用户的 Windows 桌面，并显示为一组右上角的状态灯与状态变化通知卡片。
+同时开着好几个 Claude Code / Codex 会话干活时，你大概也有这些时刻：
 
-AgentBeacon 不参与 Agent 的推理，不接管 Agent 的工具调用，也不强制 Agent 自己“记得”要通知用户。它只负责把 Agent Runtime 的 Hook 自动捕获到的状态事件，原样、低延迟地搬运到用户的桌面上。
+- 任务一跑十几分钟，你隔一会儿就得切回终端看看"跑完没"——打断手头的事，又怕它早就在等你；
+- Agent 停在权限确认上没人理，等你发现时半天已经过去了；
+- 一个会话悄悄挂了，你两个小时后才知道。
 
-AgentBeacon **不专属**于任何特定 Agent 实现。架构上把"生命周期翻译"与"状态上报"清楚分开：
+AgentBeacon 把这些全部变成**余光扫一眼**的事：每个 Agent 会话在桌面右上角有一盏独立的红绿灯，蓝灯在转、黄灯喊你、绿灯收工、红灯出事。然后你就可以安心去干别的了（是的，安稳摸鱼）。
 
-- `agent-notify` 是一个 **generic status reporting CLI / transport helper**：它不识别 Agent Runtime、不推断状态、不翻译 lifecycle、不绑定 Claude Code 或 OpenCode。它的唯一职责是把已经翻译好的 `running / approval / completed / failed` 状态事件通过 HTTP POST 送到 Receiver。
-- 真正的 Adapter 是 **per-runtime 的薄层**：监听 Agent Runtime 的 lifecycle 事件（hook / plugin / callback），把它们**翻译**成四状态之一，再调用 `agent-notify`。每个 Agent Runtime（Claude Code、OpenCode、Codex、自研 runtime）需要各自的 Adapter。
+## 它能帮你做什么
 
-任何能直接调 `POST /api/v1/status` 的程序都可以绕过 `agent-notify` 接入 Receiver，但它仍然要负责把 lifecycle 翻译成 4 状态之一 —— 这就是 Adapter 的工作。v1 在仓库里没有 in-tree Adapter；Claude Code 参考 Adapter 计划在 Round 4（Round 3 被 Indicator 三灯 UI 重构使用）。
+- **不用反复查询**：agent 还在跑就是蓝灯亮着，扫一眼就知道，不必切终端、翻 tmux、看日志。
+- **approval 秒级响应**：Agent 一等你授权，黄灯亮起 + 一张卡片从灯旁边弹出告诉你它在等什么；点完 yes 灯立刻变蓝，回去继续干自己的事。
+- **多 Agent 一屏管理**：每个会话一盏独立的灯（同一种 Agent 开几个会话就是几盏），谁在干活、谁在等你、谁完成了、谁挂了，一眼全知道。
+- **挂了立刻看见**：红灯长亮 + 错误卡片，不用等你自己撞上去。
+- **零打扰**：永远置顶但不抢焦点、不进任务栏、无边框；你打字它不碰你的光标；没有任何会话时整个指示器**完全隐身**。
 
----
+## 它长什么样
 
-## 项目边界
-
-项目一开始就保持两侧的清晰隔离：
-
-- **Agent 侧**：`Hook -> agent-notify`。运行在 Agent 所在主机（通常是 Linux/WSL），负责识别状态并把它送到 HTTP endpoint。
-- **Windows 侧**：`Receiver` 和 `Indicator` 是两个**独立进程**，各自独立启停。`Receiver` 接收 HTTP 请求、维护最新状态；`Indicator` 是 WPF 桌面 UI，通过本机 Named Pipe 订阅 Receiver 的状态快照。
-
-两侧只通过 `docs/protocol.md` 定义的 v1 HTTP 协议通信。两侧可以用不同语言实现，**不强制共享运行时**。当前：
-
-- `agent-notify` 是 Python 单文件脚本，stdlib only。
-- `Receiver` 是 C# / ASP.NET Core（Kestrel），目标框架为 **.NET 10（net10.0）**，跨平台，**v1 不引入 Windows Service / 任何 Windows-only 代码**。
-- `Indicator` 是 C# / WPF，目标框架为 **.NET 10 Windows（net10.0-windows）**，**只在 Windows 上运行**，通过 Named Pipe IPC 与 Receiver 通信。该 IPC 是 Windows 本机内部实现细节，不属于 HTTP Protocol v1。
-
----
-
-## 它解决什么问题
-
-当你同时跑着多个 Agent Session（例如 Claude Code Session A、Claude Code Session B、Codex Session C），你经常需要快速知道：
-
-- 哪个 Agent 现在还在干活（不要再去打断它）
-- 哪个 Agent 正在等你点确认（必须马上处理）
-- 哪个 Agent 这一轮已经完成（可以接着推下一步）
-- 哪个 Agent 跑挂了（需要立刻看错误）
-
-把这些信息从终端日志、tmux 标题、各家 CLI 的内置状态里翻出来太分散，也不直观。AgentBeacon 把它们集中到 Windows 桌面右上角的一排状态灯上。
-
----
-
-## 四种状态
-
-v1 严格只支持以下四种状态。其他任何取值（包括 `idle` / `offline` / `unknown` / `paused` 等）都不会被 Receiver 接受。
-
-| 颜色 | 状态 | 含义 |
-| --- | --- | --- |
-| 🔵 蓝色 | `running` | Agent 正在处理任务 |
-| 🟡 黄色 | `approval` | Agent 正在等待人工授权 |
-| 🟢 绿色 | `completed` | 本轮任务正常完成 |
-| 🔴 红色 | `failed` | 任务发生错误或异常终止 |
-
-合法状态流转示例：
+每个 Agent 会话 = 一个竖向三灯模块，上方是 Agent 名字：
 
 ```
-completed -> running
-running   -> approval
-approval  -> running
-running   -> completed
-running   -> failed
-approval  -> failed
+ Claude Code          OpenCode
+ ┌─────────┐          ┌─────────┐
+ │    ·    │          │    ●    │  ← 红 = failed（挂了）
+ │    ●    │          │    ·    │  ← 黄 = approval（等你授权）
+ │    ·    │          │    ·    │  ← 底灯 = running 蓝 / completed 绿
+ └─────────┘          └─────────┘
 ```
 
-注意：v1 **不提供 Session 离线/在线状态**。一个 Session 如果不再上报任何事件，Receiver 会保留它最后一次的状态；UI 侧的“清理已完成的 Session”是显式策略，不在协议中表达。
+| 灯位 / 颜色 | 状态 | 含义 | 通知卡片 |
+| --- | --- | --- | --- |
+| 底部 🔵 蓝 | `running` | 正在干活，别打断 | 不弹 |
+| 中间 🟡 黄 | `approval` | 在等你授权，快去 | 弹出 8 秒后收回，**黄灯保持** |
+| 底部 🟢 绿 | `completed` | 本轮完成 | 弹出 5 秒后收回，绿灯保留 5 分钟 |
+| 顶部 🔴 红 | `failed` | 挂了，去看错误 | 弹出 10 秒后收回，**红灯长亮** |
 
-一盏状态灯对应一个 Agent Session，而不是一个 Agent 类型。同一个 Agent 类型下的多个 Session 会以多盏独立的状态灯同时存在。
+卡片从对应灯的左侧弹出、展示 agent / 状态 / 消息，停留片刻自动收回——**卡片消失 ≠ 状态消失**，灯才是持久信号。多张卡片同时弹出时自动避让不重叠。
 
-`failed` 的能力边界：v1 的 `failed` 仅表示 Hook / Runtime 能观察到的失败事件。进程被强杀、宿主机宕机、网络中断导致 Hook 自身无法执行的硬故障，v1 **不保证**能上报 `failed`。当前不为此引入 heartbeat 或 wrapper。
+日常小操作：**左键拖动**任意灯可挪动整个灯列；**右键 → 关闭此灯**可清掉不再关心的会话（该会话一旦有新状态，灯会自动重建）。
 
----
+## 环境要求
 
-## 基本工作原理
+| 组件 | 要求 |
+| --- | --- |
+| Windows 桌面端（Receiver + Indicator） | Windows 10/11，.NET 10 SDK（开发验证版本 10.0.400），WPF 桌面运行时随 SDK 提供 |
+| Agent 端 | 任何能发 HTTP POST 的环境（WSL / Linux / macOS / Windows） |
+| `agent-notify`（通用上报脚本） | Python 3.8+，仅标准库，无第三方依赖（测试环境 3.12） |
+| Claude Code 插件 Adapter | Claude Code 2.1+（hooks / 插件机制，验证版本 2.1.250） |
+| 网络 | Agent 能访问 Receiver 的 `IP:端口`；**WSL 场景** Receiver 需绑定 `0.0.0.0` 并在 Windows 防火墙放行端口 |
+
+无数据库、无后台服务、无第三方运行时依赖：Receiver 和 Indicator 就是两个小进程，状态全在内存里。
+
+## 快速开始
+
+### 1. 启动 Windows 端（一次性）
+
+```powershell
+git clone <repo> ; cd AgentBeacon
+
+# Receiver（鉴权二选一：带 key 或免 key）
+dotnet build receiver -c Release
+dotnet run --project receiver -c Release --no-build -- `
+  --bind 0.0.0.0 --port 8765 --token "<你的token>" --debug
+# 免 key（仅本机调试 / 可信内网）：
+#   ... --bind 0.0.0.0 --port 8765 --no-auth --debug
+
+# Indicator（另开一个终端）
+dotnet build windows\AgentBeacon.Indicator -c Release
+dotnet run --project windows\AgentBeacon.Indicator -c Release --no-build
+```
+
+启动成功后 Indicator 安静地待在屏幕右上角（此时没有会话，所以什么都看不到——这是设计）。
+
+### 2. 接入你的 Agent
+
+**方式 A：Claude Code 用户（推荐，装完全自动）**
+
+安装一次，之后**任何目录直接 `claude`**，红绿灯自动跟随所有会话：
+
+```bash
+# 一次性安装（本仓库自带 marketplace）
+claude plugin marketplace add /path/to/AgentBeacon    # 或 github: zinc/AgentBeacon
+claude plugin install agentbeacon@agentbeacon
+
+# 配置 Receiver 地址（二选一）：
+#  ① 写进 ~/.bashrc：export AGENTBEACON_URL=... [AGENTBEACON_TOKEN=...]
+#  ② 跟插件走：安装时加 --config agentbeacon_url=... [--config agentbeacon_token=...]
+```
+
+开发期免安装临时侧载用 `claude --plugin-dir plugins/claude-code`。详见 [docs/adapter-claude-code.md](docs/adapter-claude-code.md)。
+
+**方式 B：任何其他 Agent / 脚本（一个 HTTP POST 的事）**
+
+```bash
+curl -X POST http://<windows主机IP>:8765/api/v1/status \
+  -H "Authorization: Bearer <你的token>" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"job-1","agent":"my-script","status":"running","message":"开始处理"}'
+```
+
+或用通用上报脚本 `notify/agent_notify.py`（token 可选，与 `--no-auth` 模式配合可完全免 key）。协议只有这一个 endpoint，字段说明见 [docs/protocol.md](docs/protocol.md)。
+
+### 3. 验证
+
+上面那条 curl 发完，屏幕右上角立刻出现 `my-script` 的蓝灯；把 status 换成 `approval` / `completed` / `failed` 再发，看灯变色、卡片弹出收回。开 `--debug` 时可随时 `GET /debug/sessions` 查看 Receiver 收到的全部状态。
+
+## 它是怎么工作的（30 秒版）
 
 ```
-Agent Runtime
-    ↓ (生命周期事件)
-Hook (立即翻译为 4 状态之一)
-    ↓ (本地 CLI 调用，无 debounce)
-agent-notify 脚本
-    ↓ (HTTP POST /api/v1/status，单次请求，无重试)
-Windows AgentBeacon Receiver
-    ↓ (内部事件)
-桌面右上角状态灯 + 状态变化通知卡片
+Agent（Claude Code 插件 / 任意脚本）
+    │  HTTP POST /api/v1/status（单向、无重试、last-received-wins）
+    ▼
+Receiver（Windows，C# / ASP.NET Core）     ←─ 状态的唯一权威，内存中维护
+    │  本机 Named Pipe（全量快照推送）
+    ▼
+Indicator（Windows，WPF 红绿灯面板）
 ```
 
-职责划分：
+三个进程各自独立启停：Agent 侧不依赖任何 Windows UI 实现，Receiver 不认识任何具体 Agent，Indicator 只订阅状态。AgentBeacon 不参与推理、不接管工具调用、不修改 Agent 本体——它只是把 Hook 捕获的生命周期事件搬运到你眼前。详细介绍见 [docs/architecture.md](docs/architecture.md)。
 
-- **Agent Runtime / Hook**：识别状态事件，**生命周期事件出现后立即**翻译为 4 状态之一并调用 notify。`approval` 必须立刻触发（不要等用户即将超时）。不做 debounce、不做合并。
-- **agent-notify 脚本**：只负责把状态事件通过 HTTP 转发出去，不做推断、不做重试、不做缓存。
-- **Windows Receiver**：接收 HTTP 请求，校验 Bearer Token，按 `session_id` 维护每个 Session 的最新状态（last received wins），向 Indicator 推送变化。
-- **桌面 Indicator / Notification**：把当前状态渲染为颜色灯 + 通知卡片。
+## 项目状态
 
-Agent 自身不需要也不应该主动发送通知。所有上报都由 Hook 自动触发。
+- **Round 1**：Protocol v1 + `agent-notify` + Receiver（HTTP、校验、last-received-wins）
+- **Round 2**：Windows Indicator MVP（WPF + Named Pipe IPC、无焦点、completed 墓碑）
+- **Round 3**：三灯红绿灯 UI 重构（模块化、卡片锚定、碰撞布局）
+- **Round 4**：Claude Code 插件 Adapter（hooks 映射、进程看门狗、两条 failed 上报路径）
+- **Round 5**：灯右键关闭 + 拖拽定位
+- **Round 6**：鉴权双模式（token / --no-auth）
 
----
+自动化测试 **151 个 unique tests** 全部通过（Python 3 套 + C# 2 套；C# 套件在 Linux 与 Windows 原生 .NET 上各跑一遍同一组用例）：
 
-## UI 行为规则
+| 套件 | 数量 |
+| --- | --- |
+| `tests/test_notify.py` | 8 |
+| `tests/test_receiver.py` | 40 |
+| `tests/test_hook_adapter.py` | 29 |
+| `tests/Receiver.IpcTests` | 16 |
+| `tests/Indicator.CoreTests` | 58 |
 
-UI 行为不在 HTTP 协议层表达，由 Indicator 实现。v1 规则（详见 [docs/ui-policy.md](docs/ui-policy.md)）：
+尚未实现（不在本期范围）：其它 Agent Runtime 的官方 Adapter、Windows Service / 安装器 / 开机自启、SQLite 持久化、WebSocket/SSE、审批回传、设置界面。
 
-**状态模块（红绿灯）**：一个 Agent Session = 一个独立的竖向三灯模块（上方 `agent` 标签，下方深色 housing）。顶部红灯 = `failed`，中间黄灯 = `approval`，底部灯位由 `running`（蓝）/ `completed`（绿）共用。任意时刻只有一个灯位亮起，其余灯位保持极暗灯罩色 —— 不存在第五种状态。
-
-| 状态        | 亮起灯位 / 颜色 | 卡片行为                                 | 模块行为                     |
-| ----------- | --------------- | ---------------------------------------- | ---------------------------- |
-| `running`   | 底部 / 蓝       | 不弹卡片                                 | 蓝灯，保留                   |
-| `approval`  | 中间 / 黄       | 弹卡片，**8 秒后自动收回**               | 黄灯，保留直到状态变化       |
-| `completed` | 底部 / 绿       | 弹卡片，**5 秒后自动收回**               | 绿灯，5 分钟后自动移除       |
-| `failed`    | 顶部 / 红       | 弹卡片，**10 秒后自动收回**              | 红灯，长期保留直到状态变化   |
-
-卡片停留时长（8s / 5s / 10s）与弹出/收回动画时长是 **UI 常量**，不属于 HTTP Protocol v1，可独立调整。
-
-**卡片锚定在所属 Agent 模块的左侧**：向左弹出（~220 ms）→ 停留（按时长）→ 向右收回（~200 ms）→ 隐藏；灯保持。多卡同时弹出时由 `AnchoredCardLayout` 做碰撞调整，不重叠。模块和卡片均 `ShowActivated=False` + `WS_EX_NOACTIVATE`，**不会抢占前台焦点**；没有任何 session 时 Indicator 完全不可见。
-
-`completed -> running` 是合法的（例如用户在同一 Session 发起下一轮任务）。仍严格只有四色，不引入 idle / offline / unknown / paused。任何未知 status 都会被 Receiver 拒绝（HTTP 400），即便绕开 Receiver，Indicator 的 Core 层也会 fail-fast 抛出。
-
----
-
-## 当前状态
-
-Round 3（Indicator 三灯 UI 重构）已完成：
-
-- `agent-notify`：Python 单文件 HTTP 转发脚本（stdlib only）
-- Receiver：C# / .NET 10 / ASP.NET Core / Kestrel，跨平台，承载 v1 HTTP 协议
-- Indicator：C# / .NET 10 Windows / WPF，独立进程，通过本地 Named Pipe 订阅 Receiver
-- Receiver → Indicator 的 IPC：长度前缀 JSON SnapshotEnvelope，每客户端独立 bounded Channel，DropOldest；POST 不等待 Named Pipe I/O，慢 Indicator 不会 back-pressure POST
-- 默认 Pipe 名 `AgentBeacon.Status`，可通过 `--pipe <name>` / `AGENTBEACON_PIPE` 覆盖，`--no-pipe` 显式关闭（主要用于测试）
-- Indicator UI（Round 3）：
-  - 三灯红绿灯模块（`LampModuleView`），每 session 一个模块，映射逻辑在纯函数 `LampStateMapper`
-  - 卡片锚定所属模块左侧，弹出/停留/收回动画；停留时长 approval 8s / completed 5s / failed 10s / running 无卡片
-  - `AnchoredCardLayout` 纯计算碰撞布局，多卡不重叠、空间不足优先隐藏旧卡
-  - 零 session 完全不可见；authoritative snapshot 删除 session 时模块与卡片同步清理
-  - 诊断日志：回调异常写入 `%TEMP%\AgentBeacon-indicator.log`
-- 自动化测试：**115 个 unique tests**（45 个 Round 1 + 46 个 Round 2 + 24 个 Round 3）全部通过
-  - `tests/test_notify.py` — 7
-  - `tests/test_receiver.py` — 38
-  - `tests/Receiver.IpcTests` — 15（race-aware connect-before-concurrent-POSTs + multi-client fanout 1-snapshot-per-Upsert）
-  - `tests/Indicator.CoreTests` — 55（completed-suppression 墓碑 + partial-read/payload-EOF 语义 + 三灯映射/停留策略 + AnchoredCardLayout 碰撞布局 + 快照/卡片事件顺序）
-  - `Indicator.CoreTests` 与 `Receiver.IpcTests` 在 Linux 与 Windows 原生 `dotnet.exe` 上各执行一次，跑同一组 unique tests（不重复计数）
-
-尚未实现：
-
-- Claude Code 参考 Adapter（计划 Round 4）
-- Windows Service / 安装器 / 自动启动
-- SQLite、用户账号、复杂认证（v1 只用共享 Bearer Token）
-- WebSocket / SSE / 长连接
-- 自动重试（v1 不实现，避免迟到旧事件覆盖新状态）
-- heartbeat（v1 不实现）
-- 权限审批回传
-- 卡片点击交互、设置页、多语言
-
-参见：
+## 文档
 
 - [docs/architecture.md](docs/architecture.md) — 整体链路与组件职责
-- [docs/protocol.md](docs/protocol.md) — v1 HTTP 状态上报协议
+- [docs/protocol.md](docs/protocol.md) — v1 HTTP 状态上报协议（含鉴权双模式）
 - [docs/ui-policy.md](docs/ui-policy.md) — UI 行为规则（canonical）
-- [docs/round2.md](docs/round2.md) — Round 2（Windows Indicator）的设计与运行说明（历史文档）
+- [docs/adapter-claude-code.md](docs/adapter-claude-code.md) — Claude Code Adapter 安装与映射
+- [docs/round2.md](docs/round2.md) — Round 2 设计与运行说明（历史文档）
+- [docs/wsl中开发时的调试说明.md](docs/wsl中开发时的调试说明.md) — WSL 开发时的手工调试指南
