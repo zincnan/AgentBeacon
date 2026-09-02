@@ -34,6 +34,9 @@ public static class Program
             // Round 2 close-out: multi-client fanout must deliver exactly
             // one snapshot per Upsert per client, not N*N broadcasts.
             ("Ipc_MultiClient_OneSnapshotPerUpsertPerClient",     Ipc_MultiClient_OneSnapshotPerUpsertPerClient),
+
+            // Round 6: dual auth modes.
+            ("Ipc_NoAuthMode_PostWithoutTokenWorks",              NoAuthMode_PostWithoutTokenWorks),
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -542,6 +545,25 @@ public static class Program
     private static void Assert(bool cond, string msg)
     {
         if (!cond) throw new InvalidOperationException("assertion failed: " + msg);
+    }
+
+    private static async Task NoAuthMode_PostWithoutTokenWorks()
+    {
+        // Round 6 dual-mode: a receiver started with --no-auth accepts
+        // POSTs (and /debug/sessions) with NO Authorization header at
+        // all. Token-mode behaviour (401 without header) is already
+        // covered by test_receiver.py.
+        await using var h = await IpcTestHarness.StartAsync(token: null);
+        var r = await h.PostStatusAsync(new
+        {
+            session_id = "s1", agent = "x", status = "running",
+        });
+        Assert(r.IsSuccessStatusCode,
+            $"no-auth POST without header returned {(int)r.StatusCode}");
+
+        var debug = await h.DebugSessionsAsync();
+        Assert(debug.Length == 1 && debug[0].GetProperty("session_id").GetString() == "s1",
+            "no-auth /debug/sessions should also work without a header");
     }
 
     private static async Task Ipc_MultiClient_OneSnapshotPerUpsertPerClient()

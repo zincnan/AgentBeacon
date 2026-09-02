@@ -62,7 +62,7 @@ Agent Runtime 在以下时刻会产生可观测的状态变化：
 
 ### 2.2 Hook
 
-Hook 是 Agent Runtime 的状态事件源，挂在 Agent Runtime 提供的生命周期事件上。第一个参考 Adapter 是 Claude Code（尚未实现）。
+Hook 是 Agent Runtime 的状态事件源，挂在 Agent Runtime 提供的生命周期事件上。第一个参考 Adapter 是 Claude Code，已以插件形态实现（`plugins/claude-code/`，见 [adapter-claude-code.md](adapter-claude-code.md)）。
 
 Hook 的职责：
 
@@ -130,7 +130,7 @@ Receiver 是 AgentBeacon 暴露 HTTP 接口的接收端，最终运行在用户�
 绑定与可达性：
 
 - 默认绑定 `0.0.0.0`，端口默认 `8765`，均必须可通过 CLI flag / 环境变量覆盖。
-- 鉴权使用最简单的共享 Bearer Token。Receiver 拒绝任何缺少有效 `Authorization: Bearer <token>` 的请求。
+- 鉴权为显式双模式：`--token <t>` / `AGENTBEACON_TOKEN`（共享 Bearer，拒绝无头请求）或 `--no-auth` / `AGENTBEACON_NO_AUTH=1`（完全关闭鉴权，仅限开发/可信内网）。两者互斥；都不给时拒绝启动。详见 [protocol.md](protocol.md) §6。
 - Named Pipe 默认启用：pipe 名 `AgentBeacon.Status`。`--pipe <name>` 或 `AGENTBEACON_PIPE=<name>` 可覆盖，`--no-pipe` 显式关闭（主要用于测试与无 UI 场景）。
 
 Receiver 不应该：

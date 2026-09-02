@@ -8,7 +8,7 @@ using Microsoft.Net.Http.Headers;
 
 namespace AgentBeacon.Receiver;
 
-public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug, string? Pipe)
+public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug, string? Pipe, bool NoAuth = false)
 {
     public static (CliOptions Opts, int? ExitCode) Parse(string[] args)
     {
@@ -28,6 +28,7 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
         string? token = Environment.GetEnvironmentVariable("AGENTBEACON_TOKEN");
         bool debug = false;
         bool help = false;
+        bool noAuth = ParseNoAuthEnv(Environment.GetEnvironmentVariable("AGENTBEACON_NO_AUTH"));
         string? pipe = Environment.GetEnvironmentVariable("AGENTBEACON_PIPE");
         // Default: enable the canonical Named Pipe IPC. Override with
         // AGENTBEACON_PIPE=<name>, --pipe <name>, or --no-pipe to disable.
@@ -89,6 +90,9 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
                 case "--no-pipe":
                     pipe = null;
                     break;
+                case "--no-auth":
+                    noAuth = true;
+                    break;
                 case "-h":
                 case "--help":
                     help = true;
@@ -102,11 +106,26 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
         if (help)
         {
             PrintHelp();
-            return (new CliOptions(bind, port, token, debug, pipe), 0);
+            return (new CliOptions(bind, port, token, debug, pipe, noAuth), 0);
         }
 
-        return (new CliOptions(bind, port, token, debug, pipe), null);
+        // Two explicit auth modes — refusing to start otherwise:
+        //   --token / AGENTBEACON_TOKEN  → shared-bearer auth (default)
+        //   --no-auth / AGENTBEACON_NO_AUTH=1 → auth disabled (dev/trusted-LAN)
+        if (noAuth && !string.IsNullOrEmpty(token))
+        {
+            Console.Error.WriteLine(
+                "agentbeacon-receiver: --no-auth and --token/AGENTBEACON_TOKEN are mutually exclusive; pick one auth mode");
+            return (new CliOptions(bind, port, token, debug, pipe, noAuth), 4);
+        }
+
+        return (new CliOptions(bind, port, token, debug, pipe, noAuth), null);
     }
+
+    private static bool ParseNoAuthEnv(string? v) => v is not null
+        && (string.Equals(v, "1", StringComparison.Ordinal)
+            || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(v, "yes", StringComparison.OrdinalIgnoreCase));
 
     private static bool TryParsePort(string s, out int port)
     {
@@ -121,11 +140,14 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
         Console.WriteLine("Options:");
         Console.WriteLine("  --bind <addr>    bind address (default 0.0.0.0; env: AGENTBEACON_BIND)");
         Console.WriteLine("  --port <port>    TCP port 1..65535 (default 8765; env: AGENTBEACON_PORT)");
-        Console.WriteLine("  --token <token>  bearer token (default $AGENTBEACON_TOKEN)");
+        Console.WriteLine("  --token <token>  bearer token (default $AGENTBEACON_TOKEN); enables shared-bearer auth");
+        Console.WriteLine("  --no-auth        disable auth entirely (env: AGENTBEACON_NO_AUTH=1); dev / trusted LAN only");
         Console.WriteLine("  --pipe <name>    Named Pipe name for IPC (default $AGENTBEACON_PIPE or AgentBeacon.Status)");
         Console.WriteLine("  --no-pipe        disable Named Pipe IPC");
         Console.WriteLine("  --debug          enable /debug/sessions endpoint (off by default)");
         Console.WriteLine("  -h, --help       show this help");
+        Console.WriteLine();
+        Console.WriteLine("Auth: exactly one mode must be chosen: --token (auth) or --no-auth (no auth).");
     }
 }
 
@@ -143,15 +165,25 @@ public static class Program
     {
         var (opts, exit) = CliOptions.Parse(args);
         if (exit.HasValue) return exit.Value;
-        if (string.IsNullOrEmpty(opts.Token))
+        string? bearer;
+        if (opts.NoAuth)
+        {
+            bearer = null;
+            Console.WriteLine(
+                "agentbeacon-receiver: auth DISABLED (--no-auth) — anyone who can reach this port can post status");
+        }
+        else if (string.IsNullOrEmpty(opts.Token))
         {
             Console.Error.WriteLine(
-                "agentbeacon-receiver: token is required (use --token or set AGENTBEACON_TOKEN)");
+                "agentbeacon-receiver: choose an auth mode: --token <t> / AGENTBEACON_TOKEN, or --no-auth / AGENTBEACON_NO_AUTH=1");
             return 4;
+        }
+        else
+        {
+            bearer = opts.Token!;
         }
 
         var store = new SessionStateStore();
-        var bearer = opts.Token!;
         SnapshotPublisher? publisher = null;
         if (!string.IsNullOrEmpty(opts.Pipe))
         {
@@ -181,8 +213,8 @@ public static class Program
         // POST /api/v1/status — the only Protocol v1 endpoint.
         app.MapPost("/api/v1/status", async (HttpContext ctx) =>
         {
-            // 1. Auth.
-            if (!CheckAuth(ctx, bearer))
+            // 1. Auth (skipped entirely in --no-auth mode).
+            if (bearer is not null && !CheckAuth(ctx, bearer))
             {
                 return WriteError(ctx, 401, "unauthorized", "missing or invalid bearer token");
             }
@@ -345,7 +377,7 @@ public static class Program
         {
             app.MapGet("/debug/sessions", (HttpContext ctx) =>
             {
-                if (!CheckAuth(ctx, bearer))
+                if (bearer is not null && !CheckAuth(ctx, bearer))
                 {
                     return WriteError(ctx, 401, "unauthorized", "missing or invalid bearer token");
                 }

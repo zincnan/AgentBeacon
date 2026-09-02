@@ -9,7 +9,7 @@
 - **无状态语义**：协议不携带历史、不维护顺序，Receiver 按 `session_id` 维护最新状态（last received wins）。
 - **可重发但不需要重发**：协议本身允许重发，但 v1 的 notify 故意不做自动重试 —— 旧事件重试可能覆盖已经到达的新状态。
 - **人类可读**：使用 JSON，不使用二进制或自定义编码。
-- **共享 Bearer Token 鉴权**：v1 仅使用一个预共享的 Bearer Token；不做账号、用户、权限系统。
+- **鉴权（双模式）**：Receiver 支持两种显式模式 —— 共享 Bearer Token（默认）或 `--no-auth` 完全关闭鉴权（仅限开发/可信内网）；不做账号、用户、权限系统。
 - **唯一的正式 endpoint**：`POST /api/v1/status`。其他 endpoint（调试、健康检查等）不属于 Protocol v1。
 
 ## 2. 正式 API（v1 唯一 endpoint）
@@ -106,9 +106,13 @@ Receiver 不校验流转的合法性。状态怎么变由 Hook 决定，Receiver
 
 v1 不为此引入 heartbeat、wrapper 进程、或任何形式的存活探测。在文档层面准确描述这一限制即可。
 
-## 6. 鉴权
+## 6. 鉴权（双模式）
 
-每个请求必须携带：
+Receiver 启动时必须**显式二选一**，两者都不给会拒绝启动（exit 4）：
+
+### 模式 A：共享 Bearer Token（默认）
+
+`--token <t>` 或 `AGENTBEACON_TOKEN`。每个请求必须携带：
 
 ```
 Authorization: Bearer <shared-token>
@@ -116,6 +120,16 @@ Authorization: Bearer <shared-token>
 
 - 缺失或格式错误 → `401 Unauthorized`
 - Token 不匹配 → `401 Unauthorized`
+
+### 模式 B：无鉴权（`--no-auth`）
+
+`--no-auth` 或 `AGENTBEACON_NO_AUTH=1`。Receiver 跳过鉴权检查：
+
+- 请求**不携带** `Authorization` 头（携带了也会被忽略）
+- 客户端（notify / 插件 Adapter）在未配置 token 时**完全不发**该头，而不是发空 `Bearer`
+- `--no-auth` 与 `--token` 互斥，同时给出会拒绝启动
+
+仅建议用于本机调试或完全可信的内网 —— 该模式下**任何能连到端口的人都可以上报状态**。启动日志会打印明确的警告。
 
 `<shared-token>` 是人工在 Agent 侧和 Receiver 侧之间预共享的字符串。它通过 Receiver 的 CLI 参数或环境变量配置，通过 notify 的 CLI 参数或环境变量配置，**不应硬编码进仓库或 commit 历史**。
 

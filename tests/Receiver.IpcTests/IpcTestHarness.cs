@@ -17,7 +17,8 @@ internal sealed class IpcTestHarness : IAsyncDisposable
 {
     public string PipeName { get; }
     public string BaseUrl { get; }
-    public string Token { get; }
+    /// <summary>Null when the receiver runs in --no-auth mode.</summary>
+    public string? Token { get; }
     public int Port { get; }
     public bool DebugEnabled { get; init; }
 
@@ -39,7 +40,7 @@ internal sealed class IpcTestHarness : IAsyncDisposable
     }
 
     public static async Task<IpcTestHarness> StartAsync(
-        string token, bool debug = true, bool withPipe = true,
+        string? token, bool debug = true, bool withPipe = true,
         string? pipeName = null, int port = 0)
     {
         if (port == 0)
@@ -88,9 +89,18 @@ internal sealed class IpcTestHarness : IAsyncDisposable
         psi.ArgumentList.Add("127.0.0.1");
         psi.ArgumentList.Add("--port");
         psi.ArgumentList.Add(port.ToString());
-        psi.ArgumentList.Add("--token");
-        psi.ArgumentList.Add(token);
         if (debug) psi.ArgumentList.Add("--debug");
+        // Auth mode: a null token launches the receiver with --no-auth
+        // (Round 6 dual-mode); otherwise shared-bearer as before.
+        if (token is null)
+        {
+            psi.ArgumentList.Add("--no-auth");
+        }
+        else
+        {
+            psi.ArgumentList.Add("--token");
+            psi.ArgumentList.Add(token);
+        }
         if (withPipe)
         {
             psi.ArgumentList.Add("--pipe");
@@ -197,14 +207,22 @@ internal sealed class IpcTestHarness : IAsyncDisposable
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),
         };
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
+        // No header in --no-auth mode — the test must exercise the
+        // same request shape a real token-less client would send.
+        if (Token is not null)
+        {
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
+        }
         return await _http.SendAsync(req);
     }
 
     public async Task<JsonElement[]> DebugSessionsAsync()
     {
         var req = new HttpRequestMessage(HttpMethod.Get, "/debug/sessions");
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
+        if (Token is not null)
+        {
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
+        }
         var resp = await _http.SendAsync(req);
         resp.EnsureSuccessStatusCode();
         var text = await resp.Content.ReadAsStringAsync();

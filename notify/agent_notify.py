@@ -71,11 +71,10 @@ def resolve_url(args):
 
 
 def resolve_token(args):
-    token = args.token or os.environ.get("AGENTBEACON_TOKEN")
-    if not token:
-        die(EXIT_LOCAL_ERROR,
-            "missing bearer token: set AGENTBEACON_TOKEN env var or pass --token")
-    return token
+    """Token is optional: omit it when the Receiver runs in --no-auth
+    mode (no Authorization header is sent). Against a token-mode
+    Receiver the request will 401 — that is the operator's choice."""
+    return args.token or os.environ.get("AGENTBEACON_TOKEN") or None
 
 
 def validate_and_build_payload(args):
@@ -113,16 +112,13 @@ def post(url, token, payload):
         die(EXIT_LOCAL_ERROR,
             f"encoded body is {len(body)}B, exceeds {MAX_BODY_BYTES}B; refusing to send")
 
-    req = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": f"agent-notify/{PROTOCOL_VERSION}",
-        },
-    )
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": f"agent-notify/{PROTOCOL_VERSION}",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=body, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
             return resp.status, resp.read()

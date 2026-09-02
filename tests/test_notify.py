@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOTIFY = os.path.join(REPO, "notify", "agent_notify.py")
@@ -84,6 +85,44 @@ class _RefusingServer:
         self.close()
 
 
+class _RecordingServer:
+    """Tiny HTTP server that records the Authorization header of the
+    last POST and replies 200 {"ok":true} — lets tests assert exactly
+    when the bearer header is present vs omitted."""
+
+    def __init__(self):
+        self.last_auth = None
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                outer.last_auth = self.headers.get("Authorization")
+                length = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(length)
+                body = b'{"ok":true}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        self._srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self._srv.server_address[1]
+        self._thread = threading.Thread(
+            target=self._srv.serve_forever, daemon=True)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._srv.shutdown()
+        self._srv.server_close()
+
+
 class TestNotifyLocal(unittest.TestCase):
     def test_missing_url_returns_4(self):
         c, _, err = run([
@@ -93,13 +132,27 @@ class TestNotifyLocal(unittest.TestCase):
         self.assertEqual(c, 4)
         self.assertIn("AGENTBEACON_URL", err)
 
-    def test_missing_token_returns_4(self):
-        c, _, err = run([
-            "--session-id", "x", "--agent", "y", "--status", "running",
-            "--url", "http://127.0.0.1:1",
-        ])
-        self.assertEqual(c, 4)
-        self.assertIn("AGENTBEACON_TOKEN", err)
+    def test_no_token_is_allowed_and_omits_auth_header(self):
+        # Token is optional: against a --no-auth Receiver the request
+        # must succeed WITHOUT an Authorization header (an empty
+        # "Bearer" header would also be wrong — omit it entirely).
+        with _RecordingServer() as srv:
+            c, _, err = run([
+                "--session-id", "x", "--agent", "y", "--status", "running",
+                "--url", f"http://127.0.0.1:{srv.port}",
+            ])
+            self.assertEqual(c, 0, err)
+            self.assertIsNone(srv.last_auth)
+
+    def test_token_sends_bearer_header(self):
+        with _RecordingServer() as srv:
+            c, _, _ = run([
+                "--session-id", "x", "--agent", "y", "--status", "running",
+                "--url", f"http://127.0.0.1:{srv.port}",
+                "--token", "sekret",
+            ])
+            self.assertEqual(c, 0)
+            self.assertEqual(srv.last_auth, "Bearer sekret")
 
     def test_invalid_status_rejected_by_argparse(self):
         c, _, _ = run([

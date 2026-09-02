@@ -452,5 +452,38 @@ class TestCliPortValidation(unittest.TestCase):
         self.assertEqual(code, 4, err)
 
 
+class TestCliAuthModeValidation(unittest.TestCase):
+    """Round 6: exactly one auth mode must be chosen explicitly —
+    --token (shared bearer) or --no-auth (auth disabled, dev / trusted
+    LAN). Refusing to start otherwise is the safe default."""
+
+    def _run(self, *extra):
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("AGENTBEACON_TOKEN", "AGENTBEACON_NO_AUTH")}
+        proc = subprocess.run(
+            [
+                "dotnet", "run",
+                "--project", RECEIVER_PROJECT,
+                "-c", "Debug", "--no-build",
+                "--",
+                "--bind", "127.0.0.1",
+                "--port", "8799",
+                *extra,
+            ],
+            capture_output=True, text=True, timeout=15, env=env,
+        )
+        return proc.returncode, proc.stderr
+
+    def test_no_auth_mode_chosen_returns_4(self):
+        code, err = self._run()
+        self.assertEqual(code, 4, err)
+        self.assertIn("auth mode", err)
+
+    def test_no_auth_conflicting_with_token_returns_4(self):
+        code, err = self._run("--no-auth", "--token", "t")
+        self.assertEqual(code, 4, err)
+        self.assertIn("mutually exclusive", err)
+
+
 if __name__ == "__main__":
     unittest.main()
