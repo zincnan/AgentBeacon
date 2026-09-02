@@ -1,0 +1,14 @@
+{
+  "name": "agentbeacon",
+  "owner": {
+    "name": "zinc"
+  },
+  "plugins": [
+    {
+      "name": "agentbeacon",
+      "source": "./plugins/claude-code",
+      "description": "Report Claude Code session status (running / approval / completed / failed) to an AgentBeacon Receiver.",
+      "version": "0.1.0"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "agentbeacon",
+  "description": "Report Claude Code session status (running / approval / completed / failed) to an AgentBeacon Receiver so the Windows Indicator shows a live traffic light per session.",
+  "version": "0.1.0"
+}
