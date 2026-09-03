@@ -13,7 +13,7 @@
         Title="AgentBeacon Card">
     <Border x:Name="CardBorder" Background="#F2FFFFFF" CornerRadius="8"
             BorderBrush="#FFD5DBE1" BorderThickness="1"
-            MaxWidth="320">
+            Width="300">
         <Border.Effect>
             <DropShadowEffect BlurRadius="14" ShadowDepth="2" Direction="270"
                               Opacity="0.20" Color="#000000"/>
@@ -25,22 +25,31 @@
             </Grid.ColumnDefinitions>
             <!-- 状态色装饰条：使用与灯一致的 hex，圆角只留左侧 -->
             <Border x:Name="AccentBar" Width="4" CornerRadius="8,0,0,8"/>
-            <StackPanel Grid.Column="1" Margin="12,10,14,10">
-                <TextBlock x:Name="AgentText" FontWeight="SemiBold"
-                           Foreground="#FF1F2328" FontSize="13"/>
-                <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                    <Ellipse x:Name="StatusDot" Width="8" Height="8"
-                             VerticalAlignment="Center" Margin="0,0,6,0"/>
-                    <TextBlock x:Name="StatusText" FontSize="11"
-                               FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <Grid Grid.Column="1" Margin="12,10,10,10">
+                <StackPanel>
+                    <TextBlock x:Name="AgentText" FontWeight="SemiBold"
+                               Foreground="#FF1F2328" FontSize="13"
+                               Margin="0,0,18,0"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                        <Ellipse x:Name="StatusDot" Width="8" Height="8"
+                                 VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="StatusText" FontSize="11"
+                                   FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <TextBlock x:Name="MessageText" Foreground="#FF444C56" FontSize="12.5"
+                               Margin="0,6,0,0" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="SessionIdText" Foreground="#FF8B949E" FontSize="10"
+                               Margin="0,8,0,0" FontFamily="Consolas,Courier New,monospace"/>
+                    <TextBlock x:Name="HostText" Foreground="#FF8B949E" FontSize="10"
+                               FontFamily="Consolas,Courier New,monospace"/>
                 </StackPanel>
-                <TextBlock x:Name="MessageText" Foreground="#FF444C56" FontSize="12.5"
-                           Margin="0,6,0,0" TextWrapping="Wrap"/>
-                <TextBlock x:Name="SessionIdText" Foreground="#FF8B949E" FontSize="10"
-                           Margin="0,8,0,0" FontFamily="Consolas,Courier New,monospace"/>
-                <TextBlock x:Name="HostText" Foreground="#FF8B949E" FontSize="10"
-                           FontFamily="Consolas,Courier New,monospace"/>
-            </StackPanel>
+                <!-- 右上角 ✕：提前收回卡片（不抢焦点，仅鼠标） -->
+                <TextBlock x:Name="CloseButton" Text="✕" FontSize="11"
+                           Foreground="#FF8B949E" Cursor="Hand"
+                           HorizontalAlignment="Right" VerticalAlignment="Top"
+                           Margin="0,-2,-2,0" Padding="4,2"
+                           ToolTip="提前关闭"/>
+            </Grid>
         </Grid>
     </Border>
 </Window>

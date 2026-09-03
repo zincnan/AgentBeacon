@@ -54,16 +54,25 @@ public partial class CardWindow : Window
     /// </summary>
     public event EventHandler? RetractCompleted;
 
+    /// <summary>
+    /// 用户点击卡片右上角 ✕ 要求提前关闭。MainWindow 收到后取消该
+    /// session 的停留计时器并触发收回动画（与自然到期同一收回路径）。
+    /// </summary>
+    public event EventHandler? CloseRequested;
+
     public CardWindow()
     {
         InitializeComponent();
+        // WS_EX_NOACTIVATE 只影响焦点；鼠标事件照常送达，无需激活即可点击。
+        CloseButton.MouseLeftButtonUp += (_, _) =>
+            CloseRequested?.Invoke(this, EventArgs.Empty);
     }
 
     public void UpdateFrom(SessionViewModel vm)
     {
         SessionId = vm.SessionId;
         AgentText.Text = vm.Agent;
-        StatusText.Text = vm.Status.ToUpperInvariant();
+        StatusText.Text = StatusLabel(vm.Status);
 
         // 状态色装饰：左侧色条 + 圆点用灯的原色 hex；状态文字用加深变体
         // 保证浅色底上的可读性（黄色原色在白底上对比度不足）。
@@ -78,10 +87,22 @@ public partial class CardWindow : Window
 
         MessageText.Text = vm.Message ?? "";
         MessageText.Visibility = string.IsNullOrEmpty(vm.Message) ? Visibility.Collapsed : Visibility.Visible;
-        SessionIdText.Text = "session: " + vm.SessionId;
-        HostText.Text = string.IsNullOrEmpty(vm.Host) ? "" : "host: " + vm.Host;
+        SessionIdText.Text = "会话：" + vm.SessionId;
+        HostText.Text = string.IsNullOrEmpty(vm.Host) ? "" : "主机：" + vm.Host;
         HostText.Visibility = string.IsNullOrEmpty(vm.Host) ? Visibility.Collapsed : Visibility.Visible;
     }
+
+    /// <summary>状态中文文案（卡片显示用；协议值本身不变）。</summary>
+    private static string StatusLabel(string status) => status switch
+    {
+        "running" => "运行中",
+        "approval" => "等待授权",
+        "completed" => "已完成",
+        "failed" => "失败",
+        _ => throw new ArgumentException(
+            $"unknown AgentBeacon status '{status}'; expected running/approval/completed/failed",
+            nameof(status)),
+    };
 
     /// <summary>
     /// Per-status decoration colors: (lampHex, deepHex). lampHex matches

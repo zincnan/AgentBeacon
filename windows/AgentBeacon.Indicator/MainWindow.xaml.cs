@@ -332,6 +332,8 @@ public partial class MainWindow : Window
             existing.UpdateFrom(ev.Session);
             existing.UpdateLayout();
             existing.RetractCompleted -= OnCardRetractCompleted; // avoid double-subscribe
+            existing.CloseRequested -= OnCardCloseRequested;     // 同理防重复订阅
+            existing.CloseRequested += OnCardCloseRequested;
             existing.RetractCompleted += OnCardRetractCompleted;
             _cardShowOrdinal[ev.Session.SessionId] = ++_nextCardShowOrdinal;
             ReplaceCardTimer(ev.Session.SessionId, stayMs);
@@ -353,6 +355,7 @@ public partial class MainWindow : Window
         card.WindowStartupLocation = WindowStartupLocation.Manual;
         card.UpdateFrom(ev.Session);
         card.RetractCompleted += OnCardRetractCompleted;
+        card.CloseRequested += OnCardCloseRequested;
         _cards[ev.Session.SessionId] = card;
         _cardShowOrdinal[ev.Session.SessionId] = ++_nextCardShowOrdinal;
 
@@ -412,6 +415,27 @@ public partial class MainWindow : Window
     /// it still equals the instance we are tracking (a stale event from
     /// a replaced card must not evict a fresh replacement).
     /// </summary>
+    /// <summary>
+    /// 用户点击卡片右上角 ✕：取消停留计时器并走正常收回动画（与自然到期
+    /// 同一路径）。instance-safe：按引用找到该卡当前登记的 session。
+    /// </summary>
+    private void OnCardCloseRequested(object? sender, EventArgs e)
+    {
+        if (sender is not CardWindow card) return;
+        string? trackedSessionId = null;
+        foreach (var kv in _cards)
+        {
+            if (ReferenceEquals(kv.Value, card))
+            {
+                trackedSessionId = kv.Key;
+                break;
+            }
+        }
+        if (trackedSessionId is null) return;
+        CancelCardTimer(trackedSessionId);
+        card.SlideBackToRightOfModule(); // RetractCompleted → OnCardRetractCompleted 清理
+    }
+
     private void OnCardRetractCompleted(object? sender, EventArgs e)
     {
         if (sender is not CardWindow card) return;
