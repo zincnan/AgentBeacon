@@ -1,0 +1,54 @@
+﻿AgentBeacon — Windows 端（自包含绿色版）
+==========================================
+
+这个文件夹就是全部程序（内含 .NET 运行时），不需要安装任何环境。
+把文件夹放在一个固定的位置（例如 C:\AgentBeacon），不要在 U 盘/临时目录里长期运行。
+
+一、安装（开机自启 + 立即后台运行）
+
+    在本文件夹里打开 PowerShell，执行：
+
+        powershell -ExecutionPolicy Bypass -File install.ps1
+
+    如服务端约定了 key / 端口，可一并写入：
+
+        powershell -ExecutionPolicy Bypass -File install.ps1 -Token 你的key -Port 8765
+
+    成功后：屏幕右上角出现状态灯（无会话时完全隐藏，属正常），
+    且开机自动启动，无需再管。
+
+二、改配置
+
+    编辑本文件夹的 agentbeacon.json（就三个字段）：
+
+        bind     监听地址（默认 0.0.0.0，一般不用动）
+        port     服务端口（默认 8765）
+        token    与 Agent 侧约定的 key；空字符串 "" = 免 key（默认）
+
+    改完重新执行一次 install.bat（会按新配置重启）。
+
+三、Agent 侧怎么把状态发过来（发给要接 Agent 的人）
+
+    Claude Code 用户：
+
+        claude plugin marketplace add <AgentBeacon 仓库路径或 github: owner/repo>
+        claude plugin install agentbeacon@agentbeacon
+
+    然后编辑 ~/.agentbeacon.json（Linux/WSL 是家目录）：
+
+        { "url": "http://<这台机器的IP>:8765", "token": "与上面一致的key或null" }
+
+    其它程序：向 http://<这台机器的IP>:8765/api/v1/status POST 一个 JSON 即可，
+    详见仓库内 docs/protocol.md。
+
+四、卸载
+
+    powershell -ExecutionPolicy Bypass -File uninstall.ps1          # 停止并取消自启
+    powershell -ExecutionPolicy Bypass -File uninstall.ps1 -RemoveFiles   # 连本文件夹一起删除
+
+常见问题
+--------
+- 右上角什么都没有：没有会话时是隐藏的；跑一个 Agent 或发一条测试 POST 即会出现。
+- 首次启动 Windows 防火墙弹窗：选“允许访问”（Agent 从别的机器/WSL 推送时需要）。
+- 想看后台 Receiver 日志：用任务管理器结束 agentbeacon-receiver 后，在本文件夹手动运行
+  receiver\agentbeacon-receiver.exe --config agentbeacon.json 前台查看。
