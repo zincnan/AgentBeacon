@@ -188,10 +188,9 @@ public partial class MainWindow : Window
                 {
                     AgentLabelText = s.Agent,
                     TooltipText = s.TooltipText,
-                    ActiveSlot = LampStateMapper.ForStatus(s.Status).ActiveSlot,
-                    BottomColorHex = LampStateMapper.ForStatus(s.Status).ActiveColorHex,
                     SessionId = s.SessionId,
                 };
+                module.ApplyStatus(s.Status); // first appearance: no blink
                 module.Dismissed += OnModuleDismissed;
                 module.MouseLeftButtonDown += Module_MouseLeftButtonDown;
                 ModuleStack.Children.Insert(i, module);
@@ -201,9 +200,9 @@ public partial class MainWindow : Window
             {
                 module.AgentLabelText = s.Agent;
                 module.TooltipText = s.TooltipText;
-                var st = LampStateMapper.ForStatus(s.Status);
-                module.ActiveSlot = st.ActiveSlot;
-                module.BottomColorHex = st.ActiveColorHex;
+                // Status transitions to a non-running state blink the
+                // newly-lit light (LampModuleView.ApplyStatus).
+                module.ApplyStatus(s.Status);
                 int currentIdx = ModuleStack.Children.IndexOf(module);
                 if (currentIdx != i && currentIdx >= 0)
                 {

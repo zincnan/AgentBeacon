@@ -80,12 +80,80 @@ public partial class LampModuleView : UserControl
     public string? SessionId { get; set; }
 
     /// <summary>
+    /// Current status applied via <see cref="ApplyStatus"/>. Empty before
+    /// the first apply.
+    /// </summary>
+    public string Status { get; private set; } = "";
+
+    /// <summary>
     /// Raised when the user picks "关闭此灯" in the module's context
     /// menu. MainWindow tears the module down and records a dismissal
     /// watermark; the lamp is only rebuilt when the session produces a
     /// newer event.
     /// </summary>
     public event EventHandler? Dismissed;
+
+    /// <summary>
+    /// Apply a (possibly changed) status: refresh the three lights and,
+    /// when the status actually CHANGED and the new state is not running,
+    /// blink the newly-lit light like a real traffic light for
+    /// BlinkDurationMs. Running (blue) never blinks; a lamp's first
+    /// appearance does not blink either (only transitions do).
+    /// </summary>
+    public void ApplyStatus(string status)
+    {
+        var st = LampStateMapper.ForStatus(status); // validates, fail-fast
+        var changed = Status.Length > 0 && Status != status;
+        StopBlink();
+        Status = status;
+        ActiveSlot = st.ActiveSlot;
+        BottomColorHex = st.ActiveColorHex;
+        if (changed && status != "running")
+        {
+            BlinkActiveLight();
+        }
+    }
+
+    /// <summary>
+    /// Flash the currently active light on/off (opacity 1 ↔ 0.35) for
+    /// BlinkDurationMs, then leave it solidly lit.
+    /// </summary>
+    public void BlinkActiveLight()
+    {
+        if (TopLight == null || MiddleLight == null || BottomLight == null) return;
+        var target = ActiveSlot switch
+        {
+            LampSlot.Top => TopLight,
+            LampSlot.Middle => MiddleLight,
+            _ => BottomLight,
+        };
+        var anim = new System.Windows.Media.Animation.DoubleAnimation
+        {
+            From = 1,
+            To = 0.35,
+            Duration = TimeSpan.FromMilliseconds(IndicatorUiConstants.BlinkHalfCycleMs),
+            AutoReverse = true,
+            RepeatBehavior = new System.Windows.Media.Animation.RepeatBehavior(
+                TimeSpan.FromMilliseconds(IndicatorUiConstants.BlinkDurationMs)),
+        };
+        anim.Completed += (_, _) =>
+        {
+            target.BeginAnimation(System.Windows.UIElement.OpacityProperty, null);
+            target.Opacity = 1;
+        };
+        target.BeginAnimation(System.Windows.UIElement.OpacityProperty, anim);
+    }
+
+    /// <summary>Stop any in-flight blink and leave all lights solid.</summary>
+    private void StopBlink()
+    {
+        if (TopLight == null || MiddleLight == null || BottomLight == null) return;
+        foreach (var light in new[] { TopLight, MiddleLight, BottomLight })
+        {
+            light.BeginAnimation(System.Windows.UIElement.OpacityProperty, null);
+            light.Opacity = 1;
+        }
+    }
 
     public LampModuleView()
     {
@@ -128,22 +196,55 @@ public partial class LampModuleView : UserControl
         SetLight(TopLight, ActiveSlot == LampSlot.Top, activeHex, inactiveHex);
         SetLight(MiddleLight, ActiveSlot == LampSlot.Middle, activeHex, inactiveHex);
         SetLight(BottomLight, ActiveSlot == LampSlot.Bottom, activeHex, inactiveHex);
+        ApplyGlow();
 
         ToolTip = TooltipText;
     }
 
     private static void SetLight(Ellipse e, bool active, string activeHex, string inactiveHex)
     {
+        // Fill only — the active light's glow is applied by ApplyGlow().
         e.Fill = new SolidColorBrush(
             (Color)ColorConverter.ConvertFromString(active ? activeHex : inactiveHex));
-        e.Effect = active
-            ? new DropShadowEffect
+    }
+
+    /// <summary>
+    /// Perceived-brightness boost (Round 10): the ACTIVE light gets a soft
+    /// same-color glow (DropShadowEffect, BlurRadius 9 / Opacity 0.85);
+    /// inactive lights get no effect. Canonical lamp hexes stay untouched
+    /// while the lit slot pops.
+    /// </summary>
+    private void ApplyGlow()
+    {
+        var lights = new (System.Windows.Shapes.Ellipse Light, LampSlot Slot)[]
+        {
+            (TopLight, LampSlot.Top),
+            (MiddleLight, LampSlot.Middle),
+            (BottomLight, LampSlot.Bottom),
+        };
+        string activeHex = ActiveSlot switch
+        {
+            LampSlot.Top => "#F85149",
+            LampSlot.Middle => "#D29922",
+            LampSlot.Bottom => BottomColorHex,
+            _ => "#2F81F7",
+        };
+        foreach (var (light, slot) in lights)
+        {
+            if (slot == ActiveSlot)
             {
-                BlurRadius = 6,
-                ShadowDepth = 0,
-                Opacity = 0.26,
-                Color = (Color)ColorConverter.ConvertFromString(activeHex),
+                light.Effect = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    Color = (Color)ColorConverter.ConvertFromString(activeHex),
+                    BlurRadius = 9,
+                    ShadowDepth = 0,
+                    Opacity = 0.85,
+                };
             }
-            : null;
+            else if (light.Effect is not null)
+            {
+                light.Effect = null;
+            }
+        }
     }
 }

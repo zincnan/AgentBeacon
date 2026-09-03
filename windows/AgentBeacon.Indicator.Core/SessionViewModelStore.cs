@@ -37,13 +37,13 @@ namespace AgentBeacon.Indicator.Core;
 public sealed class SessionViewModelStore
 {
     /// <summary>Card visibility duration for "approval".</summary>
-    public static readonly TimeSpan ApprovalCardDuration = TimeSpan.FromSeconds(8);
+    public static readonly TimeSpan ApprovalCardDuration = TimeSpan.FromSeconds(30);
 
     /// <summary>Card visibility duration for "completed".</summary>
-    public static readonly TimeSpan CompletedCardDuration = TimeSpan.FromSeconds(5);
+    public static readonly TimeSpan CompletedCardDuration = TimeSpan.FromSeconds(30);
 
     /// <summary>Card visibility duration for "failed".</summary>
-    public static readonly TimeSpan FailedCardDuration = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan FailedCardDuration = TimeSpan.FromSeconds(30);
 
     /// <summary>Lamp visibility duration for "completed" sessions, measured from updated_at.</summary>
     public static readonly TimeSpan CompletedLampDuration = TimeSpan.FromMinutes(5);

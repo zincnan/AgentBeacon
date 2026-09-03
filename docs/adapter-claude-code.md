@@ -23,7 +23,8 @@ claude --plugin-dir plugins/claude-code
 | --- | --- |
 | 改了插件代码后更新已安装副本 | `claude plugin marketplace update agentbeacon && claude plugin update agentbeacon` |
 | 查看安装状态 | `claude plugin list` |
-| 卸载 | `claude plugin uninstall agentbeacon`（可选再 `claude plugin marketplace remove agentbeacon`） |
+| 暂时停用 / 恢复 | `claude plugin disable agentbeacon` / `claude plugin enable agentbeacon` |
+| 卸载 | `claude plugin uninstall agentbeacon@agentbeacon`（可选再 `claude plugin marketplace remove agentbeacon`） |
 
 ## 配置
 

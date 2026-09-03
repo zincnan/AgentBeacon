@@ -34,11 +34,11 @@ AgentBeacon 把这些全部变成**余光扫一眼**的事：每个 Agent 会话
 | 灯位 / 颜色 | 状态 | 含义 | 通知卡片 |
 | --- | --- | --- | --- |
 | 底部 🔵 蓝 | `running` | 正在干活，别打断 | 不弹 |
-| 中间 🟡 黄 | `approval` | 在等你授权，快去 | 弹出 8 秒后收回，**黄灯保持** |
-| 底部 🟢 绿 | `completed` | 本轮完成 | 弹出 5 秒后收回，绿灯保留 5 分钟 |
-| 顶部 🔴 红 | `failed` | 挂了，去看错误 | 弹出 10 秒后收回，**红灯长亮** |
+| 中间 🟡 黄 | `approval` | 在等你授权，快去 | 弹出 30 秒后收回，**黄灯保持** |
+| 底部 🟢 绿 | `completed` | 本轮完成 | 弹出 30 秒后收回，绿灯保留 5 分钟 |
+| 顶部 🔴 红 | `failed` | 挂了，去看错误 | 弹出 30 秒后收回，**红灯长亮** |
 
-卡片从对应灯的左侧弹出、展示 agent / 状态 / 消息，停留片刻自动收回——**卡片消失 ≠ 状态消失**，灯才是持久信号。多张卡片同时弹出时自动避让不重叠。
+状态变化时新亮的灯（黄/绿/红）会像真实红绿灯一样**闪烁数秒**提醒你；卡片从对应灯的左侧弹出、展示 agent / 状态 / 消息，停留 30 秒后自动收回——**卡片消失 ≠ 状态消失**，灯才是持久信号。多张卡片同时弹出时自动避让不重叠。
 
 日常小操作：**左键拖动**任意灯可挪动整个灯列；**右键 → 关闭此灯**可清掉不再关心的会话（该会话一旦有新状态，灯会自动重建）。
 
@@ -104,8 +104,23 @@ dotnet run --project windows\AgentBeacon.Indicator -c Release --no-build
 ### 2. Agent 端：插件（装一次永久生效）
 
 ```bash
+# 安装
 claude plugin marketplace add /path/to/AgentBeacon
 claude plugin install agentbeacon@agentbeacon
+
+# 更新（改了插件代码后同步进已安装副本）
+claude plugin marketplace update agentbeacon
+claude plugin update agentbeacon
+
+# 查看状态
+claude plugin list
+
+# 暂时停用 / 恢复
+claude plugin disable agentbeacon
+claude plugin enable agentbeacon
+
+# 卸载（- 连 marketplace 注册一起清掉则再加：claude plugin marketplace remove agentbeacon）
+claude plugin uninstall agentbeacon@agentbeacon
 ```
 
 配置也只动一个文件 —— 填一次接收端地址即可：
@@ -148,15 +163,17 @@ Indicator（Windows，WPF 红绿灯面板）
 - **Round 6**：鉴权双模式（token / --no-auth）
 - **Round 7**：配置文件化（Windows `agentbeacon.json`、插件 `~/.agentbeacon.json`）+ Windows 一键安装/开机自启
 - **Round 8**：发布包（WSL 里 `bash scripts/dist.sh` 交叉编译 / Windows 里 `publish.ps1`，单文件夹自包含绿色版，接收方双击 `install.bat` 零环境依赖）
+- **Round 9**：托盘图标（右键退出）+ 单实例守卫 + 配置极简化（`token` 空 = 免 key）
+- **Round 10**：浅色卡片 + 状态色装饰条、灯变化闪烁（非 running 变更闪 ~4.6s）、卡片停留统一 30s、灯亮度提升（中灰灯罩 + 亮灯辉光）
 
 自动化测试 **159 个 unique tests** 全部通过（Python 3 套 + C# 2 套；C# 套件在 Linux 与 Windows 原生 .NET 上各跑一遍同一组用例）：
 
 | 套件 | 数量 |
 | --- | --- |
 | `tests/test_notify.py` | 8 |
-| `tests/test_receiver.py` | 43 |
+| `tests/test_receiver.py` | 42 |
 | `tests/test_hook_adapter.py` | 33 |
-| `tests/Receiver.IpcTests` | 17 |
+| `tests/Receiver.IpcTests` | 18 |
 | `tests/Indicator.CoreTests` | 58 |
 
 尚未实现（不在本期范围）：其它 Agent Runtime 的官方 Adapter、Windows Service / 安装器 / 开机自启、SQLite 持久化、WebSocket/SSE、审批回传、设置界面。

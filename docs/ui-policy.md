@@ -19,7 +19,7 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 | `running`   | 底部     | 🔵 蓝色 | `#2F81F7` | Agent 正在处理任务          |
 | `completed` | 底部     | 🟢 绿色 | `#3FB950` | 本轮任务正常完成            |
 
-注意 `running` 与 `completed` **共用底部物理灯位**、只是颜色不同 —— 共用的是"位置"，不是状态本身。未亮起的灯位保持极暗的灯罩色（`#34383D`），不消失、不变灰、不复用为其它含义。
+注意 `running` 与 `completed` **共用底部物理灯位**、只是颜色不同 —— 共用的是"位置"，不是状态本身。未亮起的灯位保持中灰色灯罩（`#59616B`），不消失、不变灰、不复用为其它含义；亮起的灯位带同色辉光。状态**变化**且新状态非 running 时，新亮的灯位会闪烁约 4.6 秒（像真实红绿灯），蓝灯（running）不闪。
 
 规则：
 
@@ -34,11 +34,11 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 | 状态        | 卡片行为                                                              |
 | ----------- | --------------------------------------------------------------------- |
 | `running`   | **不弹卡片**。只更新对应模块的灯位/颜色。                               |
-| `approval`  | **弹出卡片**，停留 **8 秒** 后自动收回；**黄色灯保持**直到状态变化。     |
-| `completed` | **弹出卡片**，展示最近一次的 `message`（如有）。卡片停留 **5 秒** 后自动收回。模块继续保留（5 分钟）。 |
-| `failed`    | **弹出卡片**，展示 `message`（如有）。卡片停留 **10 秒** 后自动收回。红色灯长期保留。 |
+| `approval`  | **弹出卡片**，停留 **30 秒** 后自动收回；**黄色灯保持**直到状态变化。    |
+| `completed` | **弹出卡片**，展示最近一次的 `message`（如有）。卡片停留 **30 秒** 后自动收回。模块继续保留（5 分钟）。 |
+| `failed`    | **弹出卡片**，展示 `message`（如有）。卡片停留 **30 秒** 后自动收回。红色灯长期保留。 |
 
-时长（8 秒 / 5 秒 / 10 秒）是 **UI 常量**，不属于 HTTP Protocol v1，可独立调整。
+时长（30 秒）是 **UI 常量**，不属于 HTTP Protocol v1，可独立调整。
 
 规则：
 
@@ -62,7 +62,7 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 `failed` 在 v1 中**严格分离卡片与状态灯的保留策略**：
 
 - **`failed` 状态灯**：红色，长期保留，直到下一次状态变化或用户手动清理。
-- **`failed` 通知卡片**：弹卡片，停留 **10 秒**（UI 常量）后自动隐藏。后续同一 Session 的 `updated_at` 推进会触发新的卡片。
+- **`failed` 通知卡片**：弹卡片，停留 **30 秒**（UI 常量）后自动隐藏。后续同一 Session 的 `updated_at` 推进会触发新的卡片。
 
 也就是说：状态灯是"长期可见"，卡片是"瞬时通知"。两者互不耦合。
 
@@ -71,7 +71,7 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 ## 5. 去重 / 重发
 
 - 同一 `(session_id, updated_at)` 的卡片**最多弹出一次**：如果 Receiver 重启或重发同一快照，不会重复弹卡片。
-- 同一 Session 收到**更新**的 `updated_at` 时，按新事件重新触发 `Show`：approval 重置 8 秒停留、failed 重置 10 秒停留、completed 重新弹出 5 秒卡片。
+- 同一 Session 收到**更新**的 `updated_at` 时，按新事件重新触发 `Show`：approval/completed/failed 均重置 30 秒停留。
 - 这是 UI 层的去重，不是协议层的语义。协议层不保证 `updated_at` 单调，只保证 last-received-wins。
 
 ### 5.1 completed 灯的“墓碑”抑制（Round 2 收尾）
@@ -104,7 +104,7 @@ Indicator 的 Core 层作为防御性约束再次校验：构造 `SessionViewMod
 
 卡片停留（到期收回）的 timer 必须按 `session_id` 持有，最多每 session 一个：
 
-- 收到同一 session 的新 `Show`（含 approval / completed / failed 三种，以及同状态 `updated_at` 推进后的重新 Show）：先取消旧 timer，再注册新 timer —— 这是 `completed` 5s 之后紧接 `failed` 10s 能正确生效的前提。
+- 收到同一 session 的新 `Show`（含 approval / completed / failed 三种，以及同状态 `updated_at` 推进后的重新 Show）：先取消旧 timer，再注册新 timer —— 这是 `completed` 30s 之后紧接 `failed` 30s 能正确生效的前提。
 - `running` 的 `Show` 不携带停留时长（无卡片）：确保旧 timer 已被取消，不创建新 timer；若该 session 有卡片正在显示则立即收回。
 - 收到同 session 的 `Hide`（状态离开卡片状态、或 authoritative snapshot 删除 session）：取消 timer 并收回/隐藏卡片。
 - timer 回调里要自检“我是不是该 session 仍然登记的 timer”，防止被替换的旧 callback 误杀新卡片。

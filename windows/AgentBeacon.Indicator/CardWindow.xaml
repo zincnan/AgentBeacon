@@ -11,19 +11,36 @@
         ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
         Title="AgentBeacon Card">
-    <Border x:Name="CardBorder" Background="#F01E1E1E" CornerRadius="8"
-            BorderBrush="#FF30363D" BorderThickness="1"
-            Padding="14,12" MaxWidth="320">
-        <StackPanel>
-            <TextBlock x:Name="AgentText" FontWeight="Bold" Foreground="White" FontSize="14"/>
-            <TextBlock x:Name="StatusText" Foreground="#D29922" FontSize="12"
-                       Margin="0,4,0,0" FontWeight="SemiBold"/>
-            <TextBlock x:Name="MessageText" Foreground="#C9D1D9" FontSize="13"
-                       Margin="0,6,0,0" TextWrapping="Wrap"/>
-            <TextBlock x:Name="SessionIdText" Foreground="#6E7681" FontSize="10"
-                       Margin="0,8,0,0" FontFamily="Consolas,Courier New,monospace"/>
-            <TextBlock x:Name="HostText" Foreground="#6E7681" FontSize="10"
-                       FontFamily="Consolas,Courier New,monospace"/>
-        </StackPanel>
+    <Border x:Name="CardBorder" Background="#F2FFFFFF" CornerRadius="8"
+            BorderBrush="#FFD5DBE1" BorderThickness="1"
+            MaxWidth="320">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="14" ShadowDepth="2" Direction="270"
+                              Opacity="0.20" Color="#000000"/>
+        </Border.Effect>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="4"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <!-- 状态色装饰条：使用与灯一致的 hex，圆角只留左侧 -->
+            <Border x:Name="AccentBar" Width="4" CornerRadius="8,0,0,8"/>
+            <StackPanel Grid.Column="1" Margin="12,10,14,10">
+                <TextBlock x:Name="AgentText" FontWeight="SemiBold"
+                           Foreground="#FF1F2328" FontSize="13"/>
+                <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                    <Ellipse x:Name="StatusDot" Width="8" Height="8"
+                             VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <TextBlock x:Name="StatusText" FontSize="11"
+                               FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock x:Name="MessageText" Foreground="#FF444C56" FontSize="12.5"
+                           Margin="0,6,0,0" TextWrapping="Wrap"/>
+                <TextBlock x:Name="SessionIdText" Foreground="#FF8B949E" FontSize="10"
+                           Margin="0,8,0,0" FontFamily="Consolas,Courier New,monospace"/>
+                <TextBlock x:Name="HostText" Foreground="#FF8B949E" FontSize="10"
+                           FontFamily="Consolas,Courier New,monospace"/>
+            </StackPanel>
+        </Grid>
     </Border>
 </Window>

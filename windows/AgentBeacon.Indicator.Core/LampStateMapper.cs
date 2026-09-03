@@ -29,8 +29,12 @@ public static class LampStateMapper
         /// <summary>The bottom slot's color depends on status; the other slots have a fixed color.</summary>
         public string ActiveColorHex { get; init; }
 
-        /// <summary>The two non-active slots both render as this dim color.</summary>
-        public const string InactiveColorHex = "#34383D";
+        /// <summary>
+        /// The two non-active slots render as this medium gray — bright
+        /// enough that the housing reads clearly at a glance (raised from
+        /// the original near-black #34383D in Round 10).
+        /// </summary>
+        public const string InactiveColorHex = "#59616B";
 
         /// <summary>Returns the color for a given slot given this active state.</summary>
         public string ColorFor(LampSlot slot) => slot == ActiveSlot ? ActiveColorHex : InactiveColorHex;
@@ -77,24 +81,23 @@ public static class LampStateMapper
     }
 
     /// <summary>
-    /// Card slide-out / stay / retract stay durations. Approval used to
-    /// be persistent (until status change) in Round 2; this round makes
-    /// approval auto-retract too, while the YELLOW lamp stays lit. The
-    /// user still sees approval clearly — both the lamp AND a brief card.
+    /// Card slide-out / stay / retract stay durations. All card-bearing
+    /// statuses share a single 30-second stay (Round 10), while the lamp
+    /// itself remains the persistent signal.
     /// These durations are UI policy and NOT part of Protocol v1.
     /// </summary>
     public readonly struct CardStayPolicy
     {
         public int? StayMs { get; init; }
 
-        /// <summary>Approval: 8 seconds (auto-retract; lamp stays).</summary>
-        public static readonly CardStayPolicy Approval = new() { StayMs = 8_000 };
+        /// <summary>Approval: 30 seconds (auto-retract; yellow lamp stays).</summary>
+        public static readonly CardStayPolicy Approval = new() { StayMs = 30_000 };
 
-        /// <summary>Completed: 5 seconds (auto-retract; lamp stays 5 min).</summary>
-        public static readonly CardStayPolicy Completed = new() { StayMs = 5_000 };
+        /// <summary>Completed: 30 seconds (auto-retract; green lamp stays 5 min).</summary>
+        public static readonly CardStayPolicy Completed = new() { StayMs = 30_000 };
 
-        /// <summary>Failed: 10 seconds (auto-retract; lamp stays long-lived).</summary>
-        public static readonly CardStayPolicy Failed = new() { StayMs = 10_000 };
+        /// <summary>Failed: 30 seconds (auto-retract; red lamp stays long-lived).</summary>
+        public static readonly CardStayPolicy Failed = new() { StayMs = 30_000 };
 
         /// <summary>Running: no card at all (lamp alone is enough).</summary>
         public static readonly CardStayPolicy None = new() { StayMs = null };

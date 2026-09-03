@@ -13,10 +13,10 @@ public static class Program
         var tests = new (string Name, Func<Task> Run)[]
         {
             ("Store_Running_NoCard",                                Store_Running_NoCard),
-            ("Store_Approval_ShowsCardWith8sTimer",                 Store_Approval_ShowsCardWith8sTimer),
+            ("Store_Approval_ShowsCardWith30sTimer",                 Store_Approval_ShowsCardWith30sTimer),
             ("Store_ApprovalToRunning_HidesCard",                   Store_ApprovalToRunning_HidesCard),
             ("Store_Completed_ShowsThenAutoHideSignal",             Store_Completed_ShowsThenAutoHideSignal),
-            ("Store_Failed_Lamp_LongLived_Card10s",                 Store_Failed_Lamp_LongLived_Card10s),
+            ("Store_Failed_Lamp_LongLived_Card30s",                 Store_Failed_Lamp_LongLived_Card30s),
             ("Store_FailedToRunning_HidesCard",                     Store_FailedToRunning_HidesCard),
             ("Store_Failed_DedupSameUpdatedAt",                     Store_Failed_DedupSameUpdatedAt),
             ("Store_Completed_DedupSameUpdatedAt",                  Store_Completed_DedupSameUpdatedAt),
@@ -77,9 +77,9 @@ public static class Program
             ("LampStateMapper_UnknownStatusThrows",               LampStateMapper_UnknownStatusThrows),
             ("LampStateMapper_AllFourStatuses_LightExactlyOneSlot",
                                                               LampStateMapper_AllFourStatuses_LightExactlyOneSlot),
-            ("CardStayPolicy_ApprovalIs8s",                       CardStayPolicy_ApprovalIs8s),
-            ("CardStayPolicy_CompletedIs5s",                      CardStayPolicy_CompletedIs5s),
-            ("CardStayPolicy_FailedIs10s",                        CardStayPolicy_FailedIs10s),
+            ("CardStayPolicy_ApprovalIs30s",                       CardStayPolicy_ApprovalIs30s),
+            ("CardStayPolicy_CompletedIs30s",                      CardStayPolicy_CompletedIs30s),
+            ("CardStayPolicy_FailedIs30s",                        CardStayPolicy_FailedIs30s),
             ("CardStayPolicy_RunningIsNone",                      CardStayPolicy_RunningIsNone),
             ("CardStayPolicy_UnknownStatusThrows",                CardStayPolicy_UnknownStatusThrows),
 
@@ -166,7 +166,7 @@ public static class Program
         Assert(store.Sessions[0].LampColor == "#2F81F7", "running lamp color -> blue");
     }
 
-    private static async Task Store_Approval_ShowsCardWith8sTimer()
+    private static async Task Store_Approval_ShowsCardWith30sTimer()
     {
         await Task.CompletedTask; // sync test
         var store = new SessionViewModelStore();
@@ -178,8 +178,8 @@ public static class Program
 
         Assert(sink.Events.Count == 1, $"expected 1 event, got {sink.Events.Count}");
         Assert(sink.Events[0].Kind == "Show", $"kind={sink.Events[0].Kind}");
-        Assert(sink.Events[0].AutoHideAfterMs == 8000,
-            $"approval card must auto-hide after 8000ms; got {sink.Events[0].AutoHideAfterMs}");
+        Assert(sink.Events[0].AutoHideAfterMs == 30000,
+            $"approval card must auto-hide after 30000ms; got {sink.Events[0].AutoHideAfterMs}");
 
         // Same snapshot re-applied (dedup): no new event.
         store.ApplySnapshot(new[] { Snap("s1", "approval", t0) }, t0);
@@ -214,11 +214,11 @@ public static class Program
 
         Assert(sink.Events.Count == 1, "expected 1 show event");
         Assert(sink.Events[0].Kind == "Show", $"kind={sink.Events[0].Kind}");
-        Assert(sink.Events[0].AutoHideAfterMs == 5000,
-            $"expected 5000ms auto-hide, got {sink.Events[0].AutoHideAfterMs}");
+        Assert(sink.Events[0].AutoHideAfterMs == 30000,
+            $"expected 30000ms auto-hide, got {sink.Events[0].AutoHideAfterMs}");
     }
 
-    private static async Task Store_Failed_Lamp_LongLived_Card10s()
+    private static async Task Store_Failed_Lamp_LongLived_Card30s()
     {
         await Task.CompletedTask; // sync test
         // Failed card auto-hides after 10s (Show event carries 10000ms).
@@ -232,8 +232,8 @@ public static class Program
 
         Assert(sink.Events.Count == 1, "expected 1 event");
         Assert(sink.Events[0].Kind == "Show", $"kind={sink.Events[0].Kind}");
-        Assert(sink.Events[0].AutoHideAfterMs == 10000,
-            $"failed card auto-hide must be 10000ms, got {sink.Events[0].AutoHideAfterMs}");
+        Assert(sink.Events[0].AutoHideAfterMs == 30000,
+            $"failed card auto-hide must be 30000ms, got {sink.Events[0].AutoHideAfterMs}");
 
         // Lamp is long-lived: survives well past 5 minutes.
         store.Tick(t0.AddMinutes(10));
@@ -379,8 +379,8 @@ public static class Program
         Assert(sink.Events.Count == 2, $"expected Show + Show, got {sink.Events.Count}");
         Assert(sink.Events[0].Kind == "Show", "first show");
         Assert(sink.Events[1].Kind == "Show", "second show re-arms 8s timer");
-        Assert(sink.Events[1].AutoHideAfterMs == 8000,
-            $"re-Showed approval card must carry 8000ms; got {sink.Events[1].AutoHideAfterMs}");
+        Assert(sink.Events[1].AutoHideAfterMs == 30000,
+            $"re-Showed approval card must carry 30000ms; got {sink.Events[1].AutoHideAfterMs}");
     }
 
     private static async Task Store_MultiSession_StableOrder()
@@ -928,7 +928,7 @@ public static class Program
             Assert(store.Sessions[0].LampColor == "#3FB950", "completed lamp is green");
             Assert(sink.Events.Count == 2, "new completed Show after tombstone cleared");
             Assert(sink.Events[1].Kind == "Show", "second event is Show");
-            Assert(sink.Events[1].AutoHideAfterMs == 5000, "completed card auto-hide 5s");
+            Assert(sink.Events[1].AutoHideAfterMs == 30000, "completed card auto-hide 30s");
         }
 
         // Path B: a non-completed event for the same session_id
@@ -1051,22 +1051,22 @@ public static class Program
             "all three physical slots must be reachable across the four statuses");
     }
 
-    private static async Task CardStayPolicy_ApprovalIs8s()
+    private static async Task CardStayPolicy_ApprovalIs30s()
     {
         var p = LampStateMapper.CardStayPolicy.ForStatus("approval");
-        Assert(p.StayMs == 8000, $"approval must be 8000ms; got {p.StayMs}");
+        Assert(p.StayMs == 30000, $"approval must be 30000ms; got {p.StayMs}");
     }
 
-    private static async Task CardStayPolicy_CompletedIs5s()
+    private static async Task CardStayPolicy_CompletedIs30s()
     {
         var p = LampStateMapper.CardStayPolicy.ForStatus("completed");
-        Assert(p.StayMs == 5000, $"completed must be 5000ms; got {p.StayMs}");
+        Assert(p.StayMs == 30000, $"completed must be 30000ms; got {p.StayMs}");
     }
 
-    private static async Task CardStayPolicy_FailedIs10s()
+    private static async Task CardStayPolicy_FailedIs30s()
     {
         var p = LampStateMapper.CardStayPolicy.ForStatus("failed");
-        Assert(p.StayMs == 10000, $"failed must be 10000ms; got {p.StayMs}");
+        Assert(p.StayMs == 30000, $"failed must be 30000ms; got {p.StayMs}");
     }
 
     private static async Task CardStayPolicy_RunningIsNone()
@@ -1139,8 +1139,8 @@ public static class Program
         var delivered = cardEvent ?? throw new InvalidOperationException("missing card event");
         Assert(delivered.Kind == CardEventKind.Show, $"expected Show, got {delivered.Kind}");
         Assert(delivered.Session.SessionId == "s1", "card event session id");
-        Assert(delivered.AutoHideAfterMs == 8000,
-            $"approval CardEvent.Show AutoHideAfterMs must be 8000; got {delivered.AutoHideAfterMs}");
+        Assert(delivered.AutoHideAfterMs == 30000,
+            $"approval CardEvent.Show AutoHideAfterMs must be 30000; got {delivered.AutoHideAfterMs}");
     }
 
     // ---- Round 3: AnchoredCardLayout collision adjustment ----

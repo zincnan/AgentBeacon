@@ -64,7 +64,18 @@ public partial class CardWindow : Window
         SessionId = vm.SessionId;
         AgentText.Text = vm.Agent;
         StatusText.Text = vm.Status.ToUpperInvariant();
-        StatusText.Foreground = StatusBrush(vm.Status);
+
+        // 状态色装饰：左侧色条 + 圆点用灯的原色 hex；状态文字用加深变体
+        // 保证浅色底上的可读性（黄色原色在白底上对比度不足）。
+        var (lampHex, deepHex) = StatusColors(vm.Status);
+        var lampBrush = new System.Windows.Media.SolidColorBrush(
+            (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(lampHex));
+        var deepBrush = new System.Windows.Media.SolidColorBrush(
+            (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(deepHex));
+        AccentBar.Background = lampBrush;
+        StatusDot.Fill = lampBrush;
+        StatusText.Foreground = deepBrush;
+
         MessageText.Text = vm.Message ?? "";
         MessageText.Visibility = string.IsNullOrEmpty(vm.Message) ? Visibility.Collapsed : Visibility.Visible;
         SessionIdText.Text = "session: " + vm.SessionId;
@@ -72,12 +83,18 @@ public partial class CardWindow : Window
         HostText.Visibility = string.IsNullOrEmpty(vm.Host) ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private static System.Windows.Media.Brush StatusBrush(string status) => status switch
+    /// <summary>
+    /// Per-status decoration colors: (lampHex, deepHex). lampHex matches
+    /// the traffic light exactly; deepHex is a darkened variant that stays
+    /// readable on the light card background. Unknown status throws
+    /// (fail-fast, same rule as everywhere else).
+    /// </summary>
+    private static (string LampHex, string DeepHex) StatusColors(string status) => status switch
     {
-        "failed" => System.Windows.Media.Brushes.IndianRed,
-        "approval" => System.Windows.Media.Brushes.Khaki,
-        "completed" => System.Windows.Media.Brushes.LightGreen,
-        "running" => System.Windows.Media.Brushes.LightSkyBlue,
+        "running" => ("#2F81F7", "#0969DA"),
+        "approval" => ("#D29922", "#9A6700"),
+        "completed" => ("#3FB950", "#1A7F37"),
+        "failed" => ("#F85149", "#CF222E"),
         _ => throw new ArgumentException(
             $"unknown AgentBeacon status '{status}'; expected running/approval/completed/failed",
             nameof(status)),

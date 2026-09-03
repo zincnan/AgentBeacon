@@ -60,6 +60,18 @@ public static class IndicatorUiConstants
     /// <summary>Duration of the card slide-back (right) / retract animation.</summary>
     public const int CardSlideBackDurationMs = 200;
 
+    // --- Lamp blink (status-change attention flash) ---
+
+    /// <summary>
+    /// How long a newly-changed non-running lamp blinks. Real traffic
+    /// lights flash on/off; the blink draws the eye to the yellow /
+    /// green / red transition. Running (blue) never blinks.
+    /// </summary>
+    public const int BlinkDurationMs = 4600;
+
+    /// <summary>One half-cycle of the blink (lit → dark or dark → lit).</summary>
+    public const int BlinkHalfCycleMs = 320;
+
     /// <summary>
     /// Gap (px) between the right edge of the card and the left edge of
     /// the lamp module it visually belongs to.
