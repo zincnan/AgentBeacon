@@ -46,67 +46,83 @@ AgentBeacon 把这些全部变成**余光扫一眼**的事：每个 Agent 会话
 
 | 组件 | 要求 |
 | --- | --- |
-| Windows 桌面端（Receiver + Indicator） | Windows 10/11，.NET 10 SDK（开发验证版本 10.0.400），WPF 桌面运行时随 SDK 提供 |
+| Windows 桌面端（Receiver + Indicator） | Windows 10/11。**用发布包分发时接收方零依赖**（.NET 运行时已打进去）；从源码跑则需要 .NET 10 SDK |
 | Agent 端 | 任何能发 HTTP POST 的环境（WSL / Linux / macOS / Windows） |
 | `agent-notify`（通用上报脚本） | Python 3.8+，仅标准库，无第三方依赖（测试环境 3.12） |
 | Claude Code 插件 Adapter | Claude Code 2.1+（hooks / 插件机制，验证版本 2.1.250） |
-| 网络 | Agent 能访问 Receiver 的 `IP:端口`；**WSL 场景** Receiver 需绑定 `0.0.0.0` 并在 Windows 防火墙放行端口 |
+| 网络 | Agent 能访问 Receiver 的 `IP:端口`；WSL 与 Windows 共享本地网络时直接用 `127.0.0.1` |
 
-无数据库、无后台服务、无第三方运行时依赖：Receiver 和 Indicator 就是两个小进程，状态全在内存里。
+无数据库、无后台服务：Receiver 和 Indicator 就是两个小进程，状态全在内存里。
 
 ## 快速开始
 
-### 1. 启动 Windows 端（一次性）
+### 0. 发给别人用：一个文件夹搞定
+
+**在 WSL 里**一条命令（交叉编译，不需要 PowerShell）：
+
+```bash
+bash scripts/dist.sh --zip
+```
+
+产出 `dist/agentbeacon-win-x64/`（约 247 MB，.NET 运行时已包含）和同名 zip。**把这个文件夹发给别人**，对方：
+
+1. 放到一个固定位置（如 `C:\AgentBeacon`）
+2. **双击 `install.bat`**（可先编辑 `agentbeacon.json`，或 `install.bat -Token key -Port 8765`）
+3. 完成 —— 开机自启 + 后台运行，右上角就是状态灯
+
+不需要装 .NET、不需要源码、不需要构建、不需要敲命令。改配置只动文件夹里的 `agentbeacon.json`，改完重跑 `install.bat`。卸载双击 `uninstall.bat`。
+
+Windows 侧等价脚本是 `scripts\windows\publish.ps1`（从源码机直接发布时用）。
+
+### 1. Windows 端：从源码一键安装（开发模式）
 
 ```powershell
 git clone <repo> ; cd AgentBeacon
+powershell -ExecutionPolicy Bypass -File scripts\windows\install.ps1
+```
 
-# Receiver（鉴权二选一：带 key 或免 key）
-dotnet build receiver -c Release
-dotnet run --project receiver -c Release --no-build -- `
-  --bind 0.0.0.0 --port 8765 --token "<你的token>" --debug
-# 免 key（仅本机调试 / 可信内网）：
-#   ... --bind 0.0.0.0 --port 8765 --no-auth --debug
+装完即得：本地目录构建 + **开机自启 + 后台运行**。配置只有一个文件、三个字段 —— 改端口、改 key、免 key 都只动它：
 
-# Indicator（另开一个终端）
-dotnet build windows\AgentBeacon.Indicator -c Release
+```jsonc
+// %LOCALAPPDATA%\AgentBeacon\agentbeacon.json
+{
+  "bind": "0.0.0.0",
+  "port": 8765,
+  "token": ""            // 有 key 填这里；空字符串 = 免 key（默认）
+}
+```
+
+改完重跑一次 `install.ps1`（会停旧进程、重建、按新配置启动）。卸载：`uninstall.ps1`。
+
+不想装开机自启也可以手动前台运行（值同样可以来自 agentbeacon.json）：
+
+```powershell
+dotnet run --project receiver -c Release -- --bind 0.0.0.0 --port 8765 --token "<你的token>"
 dotnet run --project windows\AgentBeacon.Indicator -c Release --no-build
 ```
 
-启动成功后 Indicator 安静地待在屏幕右上角（此时没有会话，所以什么都看不到——这是设计）。
-
-### 2. 接入你的 Agent
-
-**方式 A：Claude Code 用户（推荐，装完全自动）**
-
-安装一次，之后**任何目录直接 `claude`**，红绿灯自动跟随所有会话：
+### 2. Agent 端：插件（装一次永久生效）
 
 ```bash
-# 一次性安装（本仓库自带 marketplace）
-claude plugin marketplace add /path/to/AgentBeacon    # 或 github: zinc/AgentBeacon
+claude plugin marketplace add /path/to/AgentBeacon
 claude plugin install agentbeacon@agentbeacon
-
-# 配置 Receiver 地址（二选一）：
-#  ① 写进 ~/.bashrc：export AGENTBEACON_URL=... [AGENTBEACON_TOKEN=...]
-#  ② 跟插件走：安装时加 --config agentbeacon_url=... [--config agentbeacon_token=...]
 ```
 
-开发期免安装临时侧载用 `claude --plugin-dir plugins/claude-code`。详见 [docs/adapter-claude-code.md](docs/adapter-claude-code.md)。
+配置也只动一个文件 —— 填一次接收端地址即可：
 
-**方式 B：任何其他 Agent / 脚本（一个 HTTP POST 的事）**
-
-```bash
-curl -X POST http://<windows主机IP>:8765/api/v1/status \
-  -H "Authorization: Bearer <你的token>" \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"job-1","agent":"my-script","status":"running","message":"开始处理"}'
+```jsonc
+// ~/.agentbeacon.json
+{
+  "url": "http://127.0.0.1:8765",   // Windows Receiver 地址（WSL 与 Windows 共享网络）
+  "token": null                      // Windows 端配了 key 就填这里，没配保持 null
+}
 ```
 
-或用通用上报脚本 `notify/agent_notify.py`（token 可选，与 `--no-auth` 模式配合可完全免 key）。协议只有这一个 endpoint，字段说明见 [docs/protocol.md](docs/protocol.md)。
+之后任何目录直接 `claude`，红绿灯自动跟随所有会话。其它 Agent / 脚本用一个 HTTP POST（或 `notify/agent_notify.py`）即可接入，协议见 [docs/protocol.md](docs/protocol.md)。
 
 ### 3. 验证
 
-上面那条 curl 发完，屏幕右上角立刻出现 `my-script` 的蓝灯；把 status 换成 `approval` / `completed` / `failed` 再发，看灯变色、卡片弹出收回。开 `--debug` 时可随时 `GET /debug/sessions` 查看 Receiver 收到的全部状态。
+屏幕右上角出现灯 → 正常。没有会话时整个指示器**完全隐身**（也是正常）。开发联调可在 Receiver 配置里开 `"debug": true`，然后 `GET /debug/sessions` 查看收到的全部状态。
 
 ## 它是怎么工作的（30 秒版）
 
@@ -130,15 +146,17 @@ Indicator（Windows，WPF 红绿灯面板）
 - **Round 4**：Claude Code 插件 Adapter（hooks 映射、进程看门狗、两条 failed 上报路径）
 - **Round 5**：灯右键关闭 + 拖拽定位
 - **Round 6**：鉴权双模式（token / --no-auth）
+- **Round 7**：配置文件化（Windows `agentbeacon.json`、插件 `~/.agentbeacon.json`）+ Windows 一键安装/开机自启
+- **Round 8**：发布包（WSL 里 `bash scripts/dist.sh` 交叉编译 / Windows 里 `publish.ps1`，单文件夹自包含绿色版，接收方双击 `install.bat` 零环境依赖）
 
-自动化测试 **151 个 unique tests** 全部通过（Python 3 套 + C# 2 套；C# 套件在 Linux 与 Windows 原生 .NET 上各跑一遍同一组用例）：
+自动化测试 **159 个 unique tests** 全部通过（Python 3 套 + C# 2 套；C# 套件在 Linux 与 Windows 原生 .NET 上各跑一遍同一组用例）：
 
 | 套件 | 数量 |
 | --- | --- |
 | `tests/test_notify.py` | 8 |
-| `tests/test_receiver.py` | 40 |
-| `tests/test_hook_adapter.py` | 29 |
-| `tests/Receiver.IpcTests` | 16 |
+| `tests/test_receiver.py` | 43 |
+| `tests/test_hook_adapter.py` | 33 |
+| `tests/Receiver.IpcTests` | 17 |
 | `tests/Indicator.CoreTests` | 58 |
 
 尚未实现（不在本期范围）：其它 Agent Runtime 的官方 Adapter、Windows Service / 安装器 / 开机自启、SQLite 持久化、WebSocket/SSE、审批回传、设置界面。

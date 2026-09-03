@@ -1,6 +1,8 @@
+using System.Threading;
 using System.Windows;
 using AgentBeacon.Indicator.Core;
 using AgentBeacon.Shared;
+using WinForms = System.Windows.Forms;
 
 namespace AgentBeacon.Indicator;
 
@@ -9,9 +11,49 @@ public partial class App : Application
     private IndicatorHost? _host;
     private MainWindow? _mainWindow;
 
+    /// <summary>
+    /// Single-instance guard. Named so it also spans different terminals /
+    /// scheduled tasks. Held for the process lifetime; a second launch
+    /// sees AlreadyHandled and exits silently — the first instance is
+    /// already showing the lamps, so there is nothing visible to do.
+    /// </summary>
+    private static Mutex? _singleInstanceMutex;
+
+    // Tray icon (Round 9). The Indicator has no taskbar entry and no
+    // window when idle, so the tray is the only always-visible handle:
+    // tooltip identifies it, right-click 退出 is the supported way to
+    // close the app. Fields are rooted to keep native handles alive.
+    private WinForms::NotifyIcon? _trayIcon;
+    private System.Drawing.Bitmap? _trayBitmap;
+    private System.Drawing.Icon? _trayIconHandle;
+
     private void OnStartup(object sender, StartupEventArgs e)
     {
+        _singleInstanceMutex = new Mutex(initiallyOwned: true,
+            @"Global\AgentBeacon.Indicator.SingleInstance",
+            out var createdNew);
+        if (!createdNew)
+        {
+            // Another Indicator is already running. Exit quietly (the
+            // first instance owns the desktop surface).
+            Shutdown();
+            return;
+        }
+
+        // Pipe name resolution: --pipe CLI flag > agentbeacon.json (next
+        // to the exe or in the working directory) > default. The config
+        // file is the same one the Receiver reads.
         var pipeName = ParsePipeArg(e.Args);
+        if (string.IsNullOrEmpty(pipeName))
+        {
+            var cfgFile = AgentBeaconConfig.Discover();
+            if (cfgFile is not null
+                && AgentBeaconConfig.TryLoad(cfgFile, out var cfg, out _)
+                && cfg is { PipeSpecified: true })
+            {
+                pipeName = cfg.Pipe; // "pipe": null = IPC disabled
+            }
+        }
         if (string.IsNullOrEmpty(pipeName))
         {
             pipeName = IpcConstants.DefaultPipeName;
@@ -33,6 +75,55 @@ public partial class App : Application
             onPipeError: msg => System.Diagnostics.Debug.WriteLine(
                 $"[AgentBeacon] pipe error: {msg}"));
         _mainWindow.AttachHost(_host);
+
+        InitTrayIcon();
+    }
+
+    /// <summary>
+    /// Tray icon: a small blue dot with "AgentBeacon / 退出" context menu.
+    /// 左键单击无动作（灯就是全部 UI）；右键退出是唯一菜单项。
+    /// </summary>
+    private void InitTrayIcon()
+    {
+        // 16x16 blue dot — same running-blue as the lamp module.
+        _trayBitmap = new System.Drawing.Bitmap(16, 16);
+        using (var g = System.Drawing.Graphics.FromImage(_trayBitmap))
+        {
+            g.Clear(System.Drawing.Color.Transparent);
+            using var brush = new System.Drawing.SolidBrush(
+                System.Drawing.ColorTranslator.FromHtml("#2F81F7"));
+            g.FillEllipse(brush, 2, 2, 12, 12);
+        }
+        _trayIconHandle = System.Drawing.Icon.FromHandle(_trayBitmap.GetHicon());
+
+        var menu = new WinForms::ContextMenuStrip();
+        menu.Items.Add("退出 AgentBeacon", null, (_, _) => ExitFromTray());
+
+        _trayIcon = new WinForms::NotifyIcon
+        {
+            Icon = _trayIconHandle,
+            Text = "AgentBeacon 状态指示器",
+            Visible = true,
+            ContextMenuStrip = menu,
+        };
+    }
+
+    /// <summary>
+    /// Supported shutdown path: tray → 退出. Tears down the pipe host,
+    /// hides/closes windows, removes the tray icon, then exits the app.
+    /// </summary>
+    private void ExitFromTray()
+    {
+        _host?.Dispose();
+        _host = null;
+        if (_trayIcon is not null)
+        {
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
+            _trayIcon = null;
+        }
+        _mainWindow?.Close();
+        Shutdown();
     }
 
     private static string? ParsePipeArg(string[] args)
@@ -50,5 +141,12 @@ public partial class App : Application
     private void OnExit(object sender, ExitEventArgs e)
     {
         _host?.Dispose();
+        if (_trayIcon is not null)
+        {
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
+        }
+        _trayIconHandle?.Dispose();
+        _trayBitmap?.Dispose();
     }
 }
