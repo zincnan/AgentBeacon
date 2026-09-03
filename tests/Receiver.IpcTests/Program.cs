@@ -37,6 +37,12 @@ public static class Program
 
             // Round 6: dual auth modes.
             ("Ipc_NoAuthMode_PostWithoutTokenWorks",              NoAuthMode_PostWithoutTokenWorks),
+
+            // Round 7: agentbeacon.json config file layer.
+            ("Ipc_ConfigFile_SuppliesTokenAndDebug",              ConfigFile_SuppliesTokenAndDebug),
+
+            // Round 9: empty token in the config file = auth off.
+            ("Ipc_ConfigFile_EmptyTokenMeansNoAuth",              ConfigFile_EmptyTokenMeansNoAuth),
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -545,6 +551,66 @@ public static class Program
     private static void Assert(bool cond, string msg)
     {
         if (!cond) throw new InvalidOperationException("assertion failed: " + msg);
+    }
+
+    private static async Task ConfigFile_SuppliesTokenAndDebug()
+    {
+        // Round 7: the receiver picks auth + debug from agentbeacon.json
+        // when no CLI auth flags are passed. A POST with the file's token
+        // succeeds; without it the receiver would 401 (covered elsewhere).
+        var port = IpcTestHarness.FindFreePort();
+        var cfgPath = Path.Combine(Path.GetTempPath(),
+            $"ab-cfg-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(cfgPath,
+            $$"""{ "bind": "127.0.0.1", "port": {{port}}, "token": "cfg-secret-tok", "debug": true, "pipe": null }""");
+        try
+        {
+            await using var h = await IpcTestHarness.StartAsync(
+                token: "cfg-secret-tok", // client-side header only
+                debug: true, withPipe: false,
+                port: port, configPath: cfgPath, passAuthCli: false);
+            var r = await h.PostStatusAsync(new
+            {
+                session_id = "s1", agent = "x", status = "running",
+            });
+            Assert(r.IsSuccessStatusCode,
+                $"config-file token rejected: {(int)r.StatusCode}");
+            var debug = await h.DebugSessionsAsync();
+            Assert(debug.Length == 1 && debug[0].GetProperty("session_id").GetString() == "s1",
+                "debug endpoint should be enabled by the config file");
+        }
+        finally
+        {
+            File.Delete(cfgPath);
+        }
+    }
+
+    private static async Task ConfigFile_EmptyTokenMeansNoAuth()
+    {
+        // Round 9 simplified config: {"token": ""} means no auth — the
+        // receiver must accept headerless POSTs with only a warning.
+        var port = IpcTestHarness.FindFreePort();
+        var cfgPath = Path.Combine(Path.GetTempPath(),
+            $"ab-cfg-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(cfgPath,
+            $$"""{ "bind": "127.0.0.1", "port": {{port}}, "token": "" }""");
+        try
+        {
+            await using var h = await IpcTestHarness.StartAsync(
+                token: null, // client sends no Authorization header
+                debug: false, withPipe: false,
+                port: port, configPath: cfgPath, passAuthCli: false);
+            var r = await h.PostStatusAsync(new
+            {
+                session_id = "s1", agent = "x", status = "running",
+            });
+            Assert(r.IsSuccessStatusCode,
+                $"empty-token config should mean no auth, got {(int)r.StatusCode}");
+        }
+        finally
+        {
+            File.Delete(cfgPath);
+        }
     }
 
     private static async Task NoAuthMode_PostWithoutTokenWorks()

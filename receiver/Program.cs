@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using AgentBeacon.Shared;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Builder;
@@ -8,34 +9,19 @@ using Microsoft.Net.Http.Headers;
 
 namespace AgentBeacon.Receiver;
 
-public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug, string? Pipe, bool NoAuth = false)
+public sealed record CliOptions(
+    string Bind, int Port, string? Token, bool Debug, string? Pipe,
+    bool NoAuth = false, string? ConfigFile = null)
 {
     public static (CliOptions Opts, int? ExitCode) Parse(string[] args)
     {
-        string bind = Environment.GetEnvironmentVariable("AGENTBEACON_BIND") ?? "0.0.0.0";
-        int port = 8765;
-        var portEnv = Environment.GetEnvironmentVariable("AGENTBEACON_PORT");
-        if (portEnv is not null)
-        {
-            if (!TryParsePort(portEnv, out var parsedFromEnv))
-            {
-                Console.Error.WriteLine(
-                    $"agentbeacon-receiver: AGENTBEACON_PORT must be an integer in [1, 65535], got '{portEnv}'");
-                return (new CliOptions(bind, port, Token: null, Debug: false, Pipe: null), 4);
-            }
-            port = parsedFromEnv;
-        }
-        string? token = Environment.GetEnvironmentVariable("AGENTBEACON_TOKEN");
-        bool debug = false;
+        // ---- Layer 1: CLI flags (null = not given) ----
+        string? cliBind = null, cliToken = null, cliPipe = null;
+        int? cliPort = null;
+        bool? cliDebug = null, cliNoAuth = null;
+        bool cliPipeDisabled = false;
+        string? configPath = null;
         bool help = false;
-        bool noAuth = ParseNoAuthEnv(Environment.GetEnvironmentVariable("AGENTBEACON_NO_AUTH"));
-        string? pipe = Environment.GetEnvironmentVariable("AGENTBEACON_PIPE");
-        // Default: enable the canonical Named Pipe IPC. Override with
-        // AGENTBEACON_PIPE=<name>, --pipe <name>, or --no-pipe to disable.
-        if (string.IsNullOrEmpty(pipe))
-        {
-            pipe = IpcConstants.DefaultPipeName;
-        }
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -45,53 +31,62 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
                     if (i + 1 >= args.Length)
                     {
                         Console.Error.WriteLine("agentbeacon-receiver: --bind requires a value");
-                        return (new CliOptions(bind, port, token, debug, pipe), 4);
+                        return (Fail(), 4);
                     }
-                    bind = args[++i];
+                    cliBind = args[++i];
                     break;
                 case "--port":
                     if (i + 1 >= args.Length)
                     {
                         Console.Error.WriteLine("agentbeacon-receiver: --port requires a value");
-                        return (new CliOptions(bind, port, token, debug, pipe), 4);
+                        return (Fail(), 4);
                     }
                     var portArg = args[++i];
                     if (!TryParsePort(portArg, out var parsed))
                     {
                         Console.Error.WriteLine(
                             $"agentbeacon-receiver: --port must be an integer in [1, 65535], got '{portArg}'");
-                        return (new CliOptions(bind, port, token, debug, pipe), 4);
+                        return (Fail(), 4);
                     }
-                    port = parsed;
+                    cliPort = parsed;
                     break;
                 case "--token":
                     if (i + 1 >= args.Length)
                     {
                         Console.Error.WriteLine("agentbeacon-receiver: --token requires a value");
-                        return (new CliOptions(bind, port, token, debug, pipe), 4);
+                        return (Fail(), 4);
                     }
-                    token = args[++i];
+                    cliToken = args[++i];
+                    break;
+                case "--no-auth":
+                    cliNoAuth = true;
                     break;
                 case "--debug":
-                    debug = true;
+                    cliDebug = true;
                     break;
                 case "--pipe":
                     if (i + 1 >= args.Length)
                     {
                         Console.Error.WriteLine("agentbeacon-receiver: --pipe requires a value");
-                        return (new CliOptions(bind, port, token, debug, pipe), 4);
+                        return (Fail(), 4);
                     }
-                    pipe = args[++i];
-                    if (string.IsNullOrEmpty(pipe))
+                    cliPipe = args[++i];
+                    if (string.IsNullOrEmpty(cliPipe))
                     {
-                        pipe = null;
+                        cliPipe = null;
+                        cliPipeDisabled = true;
                     }
                     break;
                 case "--no-pipe":
-                    pipe = null;
+                    cliPipeDisabled = true;
                     break;
-                case "--no-auth":
-                    noAuth = true;
+                case "--config":
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.Error.WriteLine("agentbeacon-receiver: --config requires a value");
+                        return (Fail(), 4);
+                    }
+                    configPath = args[++i];
                     break;
                 case "-h":
                 case "--help":
@@ -99,27 +94,131 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
                     break;
                 default:
                     Console.Error.WriteLine($"agentbeacon-receiver: unknown argument: {args[i]}");
-                    return (new CliOptions(bind, port, token, debug, pipe), 4);
+                    return (Fail(), 4);
             }
         }
 
         if (help)
         {
             PrintHelp();
-            return (new CliOptions(bind, port, token, debug, pipe, noAuth), 0);
+            return (Fail(), 0);
         }
 
-        // Two explicit auth modes — refusing to start otherwise:
-        //   --token / AGENTBEACON_TOKEN  → shared-bearer auth (default)
-        //   --no-auth / AGENTBEACON_NO_AUTH=1 → auth disabled (dev/trusted-LAN)
-        if (noAuth && !string.IsNullOrEmpty(token))
+        // ---- Layer 3: optional config file (agentbeacon.json) ----
+        // Discovery: --config path → next to the exe → current directory.
+        string? cfgFile = AgentBeaconConfig.Discover(configPath);
+        AgentBeaconConfig? cfg = null;
+        if (cfgFile is not null
+            && !AgentBeaconConfig.TryLoad(cfgFile, out cfg, out var cfgError))
         {
-            Console.Error.WriteLine(
-                "agentbeacon-receiver: --no-auth and --token/AGENTBEACON_TOKEN are mutually exclusive; pick one auth mode");
-            return (new CliOptions(bind, port, token, debug, pipe, noAuth), 4);
+            Console.Error.WriteLine($"agentbeacon-receiver: {cfgError}");
+            return (Fail(), 4);
         }
 
-        return (new CliOptions(bind, port, token, debug, pipe, noAuth), null);
+        // ---- Layer 2: environment variables ----
+        var envBind = Environment.GetEnvironmentVariable("AGENTBEACON_BIND");
+        int? envPort = null;
+        var portEnv = Environment.GetEnvironmentVariable("AGENTBEACON_PORT");
+        if (portEnv is not null)
+        {
+            if (!TryParsePort(portEnv, out var parsedFromEnv))
+            {
+                Console.Error.WriteLine(
+                    $"agentbeacon-receiver: AGENTBEACON_PORT must be an integer in [1, 65535], got '{portEnv}'");
+                return (Fail(), 4);
+            }
+            envPort = parsedFromEnv;
+        }
+        var envPipe = Environment.GetEnvironmentVariable("AGENTBEACON_PIPE");
+        if (string.IsNullOrEmpty(envPipe))
+        {
+            envPipe = null;
+        }
+
+        // ---- Merge: CLI > env > config file > default ----
+        string bind = cliBind ?? envBind ?? cfg?.Bind ?? "0.0.0.0";
+        int port = cliPort ?? envPort ?? cfg?.Port ?? 8765;
+        bool debug = cliDebug ?? cfg?.Debug ?? false;
+
+        string? pipe;
+        if (cliPipe is not null || cliPipeDisabled)
+        {
+            pipe = cliPipeDisabled ? null : cliPipe;
+        }
+        else if (envPipe is not null)
+        {
+            pipe = envPipe;
+        }
+        else if (cfg is not null && cfg.PipeSpecified)
+        {
+            pipe = cfg.Pipe; // "pipe": null in the file = disable IPC
+        }
+        else
+        {
+            pipe = IpcConstants.DefaultPipeName;
+        }
+
+        // ---- Auth (Round 9 semantics) ----
+        // Simple model: the effective token is the first non-empty value
+        // of  CLI --token > env AGENTBEACON_TOKEN > file "token" > "".
+        // Non-empty token → shared-bearer auth; empty token → auth is
+        // OFF (with a loud startup warning). --no-auth /
+        // AGENTBEACON_NO_AUTH / file "no_auth" remain as explicit
+        // overrides that force auth off even when a token is present.
+        // Within a single layer, giving both token and no-auth is an
+        // error.
+        string? token = null;
+        bool noAuth = false;
+        if (cliToken is not null || cliNoAuth == true)
+        {
+            if (cliToken is not null && cliNoAuth == true)
+            {
+                Console.Error.WriteLine(
+                    "agentbeacon-receiver: --token and --no-auth are mutually exclusive; pick one auth mode");
+                return (Fail(), 4);
+            }
+            token = cliToken;
+            noAuth = cliNoAuth == true;
+        }
+        else
+        {
+            var envToken = Environment.GetEnvironmentVariable("AGENTBEACON_TOKEN");
+            var envNoAuth = ParseNoAuthEnv(Environment.GetEnvironmentVariable("AGENTBEACON_NO_AUTH"));
+            if (!string.IsNullOrEmpty(envToken) || envNoAuth)
+            {
+                if (!string.IsNullOrEmpty(envToken) && envNoAuth)
+                {
+                    Console.Error.WriteLine(
+                        "agentbeacon-receiver: AGENTBEACON_TOKEN and AGENTBEACON_NO_AUTH are mutually exclusive; pick one auth mode");
+                    return (Fail(), 4);
+                }
+                token = string.IsNullOrEmpty(envToken) ? null : envToken;
+                noAuth = envNoAuth;
+            }
+            else
+            {
+                var fileToken = cfg?.Token;
+                var fileNoAuth = cfg?.NoAuth == true;
+                if (!string.IsNullOrEmpty(fileToken) && fileNoAuth)
+                {
+                    Console.Error.WriteLine(
+                        $"agentbeacon-receiver: 'token' and 'no_auth' are mutually exclusive in {cfgFile}; pick one auth mode");
+                    return (Fail(), 4);
+                }
+                // Round 9: absent OR empty token simply means auth off.
+                token = string.IsNullOrEmpty(fileToken) ? null : fileToken;
+                noAuth = fileNoAuth;
+            }
+        }
+
+        if (cfgFile is not null)
+        {
+            Console.WriteLine($"agentbeacon-receiver: config file: {cfgFile}");
+        }
+
+        return (new CliOptions(bind, port, token, debug, pipe, noAuth, cfgFile), null);
+
+        CliOptions Fail() => new("0.0.0.0", 8765, null, false, null);
     }
 
     private static bool ParseNoAuthEnv(string? v) => v is not null
@@ -138,6 +237,7 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
         Console.WriteLine("agentbeacon-receiver: AgentBeacon v1 HTTP receiver (C# / ASP.NET Core / Kestrel).");
         Console.WriteLine();
         Console.WriteLine("Options:");
+        Console.WriteLine("  --config <path>  config file (default: agentbeacon.json next to the exe or in the cwd)");
         Console.WriteLine("  --bind <addr>    bind address (default 0.0.0.0; env: AGENTBEACON_BIND)");
         Console.WriteLine("  --port <port>    TCP port 1..65535 (default 8765; env: AGENTBEACON_PORT)");
         Console.WriteLine("  --token <token>  bearer token (default $AGENTBEACON_TOKEN); enables shared-bearer auth");
@@ -147,12 +247,16 @@ public sealed record CliOptions(string Bind, int Port, string? Token, bool Debug
         Console.WriteLine("  --debug          enable /debug/sessions endpoint (off by default)");
         Console.WriteLine("  -h, --help       show this help");
         Console.WriteLine();
+        Console.WriteLine("Values resolve as: CLI flag > environment variable > config file > default.");
         Console.WriteLine("Auth: exactly one mode must be chosen: --token (auth) or --no-auth (no auth).");
     }
 }
 
 public static class Program
 {
+    /// <summary>Held for the process lifetime so the guard is not GC'd.</summary>
+    private static Mutex? _singleInstanceGuard;
+
     private const int MaxBodyBytes = 8 * 1024;
     private const int MaxSessionIdChars = 256;
     private const int MaxMessageChars = 512;
@@ -174,16 +278,43 @@ public static class Program
         }
         else if (string.IsNullOrEmpty(opts.Token))
         {
-            Console.Error.WriteLine(
-                "agentbeacon-receiver: choose an auth mode: --token <t> / AGENTBEACON_TOKEN, or --no-auth / AGENTBEACON_NO_AUTH=1");
-            return 4;
+            bearer = null;
+            Console.WriteLine(
+                "agentbeacon-receiver: auth DISABLED (no token configured) — anyone who can reach this port can post status");
         }
         else
         {
-            bearer = opts.Token!;
+            bearer = opts.Token;
         }
 
         var store = new SessionStateStore();
+
+        // Single-instance guard, keyed by (pipe, bind, port): starting the
+        // SAME receiver twice fails here with a clear message instead of a
+        // raw Kestrel bind exception. Different ports/pipes (e.g. a dev
+        // instance next to the installed one, or the test harness) are
+        // legitimately distinct instances and must not block each other.
+        Mutex? singleInstance;
+        try
+        {
+            var guardName =
+                $@"Global\AgentBeacon.Receiver.{opts.Pipe ?? "nopipe"}:{opts.Bind}:{opts.Port}";
+            singleInstance = new Mutex(initiallyOwned: true,
+                guardName,
+                out var createdNew);
+            if (!createdNew)
+            {
+                Console.Error.WriteLine(
+                    "agentbeacon-receiver: another receiver instance is already running; exit it first (or just use the running one)");
+                singleInstance.Dispose();
+                return 5;
+            }
+            _singleInstanceGuard = singleInstance; // root it for the process lifetime
+        }
+        catch (PlatformNotSupportedException)
+        {
+            singleInstance = null; // unnamed fallback unnecessary; keep going
+        }
         SnapshotPublisher? publisher = null;
         if (!string.IsNullOrEmpty(opts.Pipe))
         {

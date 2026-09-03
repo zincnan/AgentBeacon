@@ -106,32 +106,31 @@ Receiver 不校验流转的合法性。状态怎么变由 Hook 决定，Receiver
 
 v1 不为此引入 heartbeat、wrapper 进程、或任何形式的存活探测。在文档层面准确描述这一限制即可。
 
-## 6. 鉴权（双模式）
+## 6. 鉴权（Round 9 简化语义）
 
-Receiver 启动时必须**显式二选一**，两者都不给会拒绝启动（exit 4）：
+一句话：**token 有值 = 开鉴权；token 为空 = 免鉴权**。
 
-### 模式 A：共享 Bearer Token（默认）
+token 的取值优先级：`--token` CLI flag > `AGENTBEACON_TOKEN` 环境变量 > `agentbeacon.json` 的 `"token"` 字段 > 空字符串。推荐直接用配置文件（`bind` / `port` / `token` 三个字段就够了）：
 
-`--token <t>` 或 `AGENTBEACON_TOKEN`。每个请求必须携带：
-
-```
-Authorization: Bearer <shared-token>
+```json
+{ "bind": "0.0.0.0", "port": 8765, "token": "" }
 ```
 
-- 缺失或格式错误 → `401 Unauthorized`
-- Token 不匹配 → `401 Unauthorized`
+### token 非空（共享 Bearer 模式）
 
-### 模式 B：无鉴权（`--no-auth`）
+每个请求必须携带 `Authorization: Bearer <token>`，缺失或不匹配 → `401 Unauthorized`。
 
-`--no-auth` 或 `AGENTBEACON_NO_AUTH=1`。Receiver 跳过鉴权检查：
+### token 为空（免鉴权模式，默认）
 
 - 请求**不携带** `Authorization` 头（携带了也会被忽略）
 - 客户端（notify / 插件 Adapter）在未配置 token 时**完全不发**该头，而不是发空 `Bearer`
-- `--no-auth` 与 `--token` 互斥，同时给出会拒绝启动
+- 启动日志打印明确警告：该模式下**任何能连到端口的人都可以上报状态**。仅建议本机调试或完全可信的内网使用
 
-仅建议用于本机调试或完全可信的内网 —— 该模式下**任何能连到端口的人都可以上报状态**。启动日志会打印明确的警告。
+### 兼容保留
 
-`<shared-token>` 是人工在 Agent 侧和 Receiver 侧之间预共享的字符串。它通过 Receiver 的 CLI 参数或环境变量配置，通过 notify 的 CLI 参数或环境变量配置，**不应硬编码进仓库或 commit 历史**。
+`--no-auth` / `AGENTBEACON_NO_AUTH=1` / 配置文件 `"no_auth": true` 仍然有效（显式强制关闭鉴权，可覆盖已配置的 token）；同一来源内 token 与 no-auth 同时给出会拒绝启动（exit 4）。
+
+`<shared-token>` 是人工在 Agent 侧和 Receiver 侧之间预共享的字符串，**不应硬编码进仓库或 commit 历史**。
 
 v1 不实现：
 

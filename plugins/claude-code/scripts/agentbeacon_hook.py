@@ -30,8 +30,11 @@ the watchdog POSTs `failed`. A clean exit runs SessionEnd first, which
 removes the sidecar so the watchdog never fires on normal shutdown.
 
 Config (first hit wins):
-  CLAUDE_PLUGIN_OPTION_AGENTBEACON_URL / AGENTBEACON_URL
-  CLAUDE_PLUGIN_OPTION_AGENTBEACON_TOKEN / AGENTBEACON_TOKEN
+  CLAUDE_PLUGIN_OPTION_AGENTBEACON_URL / AGENTBEACON_URL      (env)
+  CLAUDE_PLUGIN_OPTION_AGENTBEACON_TOKEN / AGENTBEACON_TOKEN  (env)
+  ~/.agentbeacon.json   ({"url": "http://host:port", "token": null}) — the
+                        edit-once file; env vars still override it so
+                        tests and one-off runs keep working.
 """
 
 import json
@@ -96,17 +99,40 @@ def build_envelope(session_id, status, message=None, host=None, agent=AGENT):
     return env
 
 
+def load_config_file(env=None):
+    """Read ~/.agentbeacon.json (or AGENTBEACON_CONFIG=<path>).
+
+    Returns {} when the file is absent or malformed — the config file is
+    a convenience layer, never a hard requirement, and a broken file
+    must not break the hook (an env var or plugin option may still be
+    the active source).
+    """
+    env = env if env is not None else os.environ
+    path = env.get("AGENTBEACON_CONFIG") or os.path.join(
+        os.path.expanduser("~"), ".agentbeacon.json")
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def resolve_config(env=None):
-    """Resolve (url, token) from plugin options / environment."""
+    """Resolve (url, token): plugin option / env var first, then the
+    ~/.agentbeacon.json config file as fallback."""
     env = env if env is not None else os.environ
 
-    def pick(opt, plain):
+    def pick(opt, plain, file_key):
         v = env.get(opt) or env.get(plain)
-        return v or None
+        if v:
+            return v
+        file_val = load_config_file(env).get(file_key)
+        return file_val if file_val else None
 
     return (
-        pick("CLAUDE_PLUGIN_OPTION_AGENTBEACON_URL", "AGENTBEACON_URL"),
-        pick("CLAUDE_PLUGIN_OPTION_AGENTBEACON_TOKEN", "AGENTBEACON_TOKEN"),
+        pick("CLAUDE_PLUGIN_OPTION_AGENTBEACON_URL", "AGENTBEACON_URL", "url"),
+        pick("CLAUDE_PLUGIN_OPTION_AGENTBEACON_TOKEN", "AGENTBEACON_TOKEN", "token"),
     )
 
 

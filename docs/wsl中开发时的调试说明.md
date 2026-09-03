@@ -38,42 +38,43 @@ Start-Process `
 
 #### 4. 前台启动 Receiver
 
-鉴权二选一（都不给会拒绝启动）：
-
-带 key（共享 Bearer）：
+推荐：复制一份 `agentbeacon.example.json` 为 `agentbeacon.json`（就 `bind/port/token` 三个字段，token 空字符串 = 免 key），然后：
 
 ```powershell
-dotnet "$local\receiver\bin\Release\net10.0\agentbeacon-receiver.dll" `
-  --bind 0.0.0.0 `
-  --port 8765 `
-  --token "<TEST_TOKEN>" `
-  --debug
+dotnet "$local\receiver\bin\Release\net10.0\agentbeacon-receiver.dll" --config "$local\agentbeacon.json"
 ```
 
-免 key（仅限本机调试 / 可信内网，启动日志会有警告）：
+（不加 `--config` 时也会自动查找 exe 旁边或当前目录的 `agentbeacon.json`。）
+
+也可以完全用 CLI flag（不带 `--token` 即免 key）：
 
 ```powershell
+# 带 key
 dotnet "$local\receiver\bin\Release\net10.0\agentbeacon-receiver.dll" `
-  --bind 0.0.0.0 `
-  --port 8765 `
-  --no-auth `
-  --debug
+  --bind 0.0.0.0 --port 8765 --token "<TEST_TOKEN>" --debug
+
+# 免 key
+dotnet "$local\receiver\bin\Release\net10.0\agentbeacon-receiver.dll" `
+  --bind 0.0.0.0 --port 8765 --debug
 ```
 
-前台运行方便直接查看错误和日志。
+前台运行方便直接查看错误和日志。值生效优先级：CLI flag > 环境变量 > 配置文件 > 默认。
 
 #### 5. WSL 中联调
 
-```bash
-curl http://127.0.0.1:8765/healthz
+插件侧推荐 `~/.agentbeacon.json`（一次配置，所有会话生效）：
 
-export AGENTBEACON_URL=http://127.0.0.1:8765
+```bash
+cat > ~/.agentbeacon.json << 'EOF'
+{ "url": "http://127.0.0.1:8765", "token": "TEST_TOKEN" }
+EOF
 ```
 
-带 key 模式还需要（免 key 模式跳过，不设置即可，不会发 Authorization 头）：
+或沿用环境变量：
 
 ```bash
-export AGENTBEACON_TOKEN="<TEST_TOKEN>"
+export AGENTBEACON_URL=http://127.0.0.1:8765
+export AGENTBEACON_TOKEN="<TEST_TOKEN>"   # 免 key 模式不需要
 ```
 
 然后在 WSL 原仓库中启动需要调试的 Agent，例如：

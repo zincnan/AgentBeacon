@@ -41,7 +41,8 @@ internal sealed class IpcTestHarness : IAsyncDisposable
 
     public static async Task<IpcTestHarness> StartAsync(
         string? token, bool debug = true, bool withPipe = true,
-        string? pipeName = null, int port = 0)
+        string? pipeName = null, int port = 0,
+        string? configPath = null, bool passAuthCli = true)
     {
         if (port == 0)
         {
@@ -90,16 +91,26 @@ internal sealed class IpcTestHarness : IAsyncDisposable
         psi.ArgumentList.Add("--port");
         psi.ArgumentList.Add(port.ToString());
         if (debug) psi.ArgumentList.Add("--debug");
-        // Auth mode: a null token launches the receiver with --no-auth
-        // (Round 6 dual-mode); otherwise shared-bearer as before.
-        if (token is null)
+        if (configPath is not null)
         {
-            psi.ArgumentList.Add("--no-auth");
+            psi.ArgumentList.Add("--config");
+            psi.ArgumentList.Add(configPath);
         }
-        else
+        // Auth mode on the CLI: a null token means --no-auth, and
+        // passAuthCli=false means "let the config file decide" (the
+        // receiver must still be able to start, so the file must carry
+        // a token or no_auth).
+        if (passAuthCli)
         {
-            psi.ArgumentList.Add("--token");
-            psi.ArgumentList.Add(token);
+            if (token is null)
+            {
+                psi.ArgumentList.Add("--no-auth");
+            }
+            else
+            {
+                psi.ArgumentList.Add("--token");
+                psi.ArgumentList.Add(token);
+            }
         }
         if (withPipe)
         {
@@ -164,7 +175,7 @@ internal sealed class IpcTestHarness : IAsyncDisposable
         return new IpcTestHarness(pipeName, port, token, debug, proc, stdoutLog);
     }
 
-    private static int FindFreePort()
+    internal static int FindFreePort()
     {
         var l = new TcpListener(IPAddress.Loopback, 0);
         l.Start();

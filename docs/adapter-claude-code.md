@@ -27,12 +27,15 @@ claude --plugin-dir plugins/claude-code
 
 ## 配置
 
-Receiver 地址与 Token 按优先级取：
+推荐方式（Round 7）：编辑一次 `~/.agentbeacon.json`，之后所有会话生效：
 
-1. 插件安装配置：`claude plugin install agentbeacon --config agentbeacon_url=http://<windows-host>:8765 --config agentbeacon_token=<token>`（以 `CLAUDE_PLUGIN_OPTION_AGENTBEACON_URL / _TOKEN` 环境变量传入 hook）
-2. 普通环境变量：`AGENTBEACON_URL` / `AGENTBEACON_TOKEN`
+```json
+{ "url": "http://127.0.0.1:8765", "token": null }
+```
 
-Token 是可选的：未配置时不发 `Authorization` 头，配合 Receiver 的 `--no-auth` 模式（见 protocol.md §6）即可免 key 联调。
+- `token`：Windows Receiver 配了 key 就填，`--no-auth` 模式保持 `null`（不发 Authorization 头）
+- 环境变量（`AGENTBEACON_URL` / `AGENTBEACON_TOKEN`）与插件安装配置（`--config agentbeacon_url=...`）仍然优先于该文件 —— 临时覆盖、CI、测试不受影响
+- 文件缺失或损坏不报错，hook 静默跳过（还有其它来源兜底）
 
 注意：claude 跑在 WSL/Linux 时，Windows Receiver 必须绑定到 WSL 可达的地址（`--bind 0.0.0.0` 或 LAN IP），不能用 `127.0.0.1`。
 

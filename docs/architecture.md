@@ -129,8 +129,8 @@ Receiver 是 AgentBeacon 暴露 HTTP 接口的接收端，最终运行在用户�
 
 绑定与可达性：
 
-- 默认绑定 `0.0.0.0`，端口默认 `8765`，均必须可通过 CLI flag / 环境变量覆盖。
-- 鉴权为显式双模式：`--token <t>` / `AGENTBEACON_TOKEN`（共享 Bearer，拒绝无头请求）或 `--no-auth` / `AGENTBEACON_NO_AUTH=1`（完全关闭鉴权，仅限开发/可信内网）。两者互斥；都不给时拒绝启动。详见 [protocol.md](protocol.md) §6。
+- 默认绑定 `0.0.0.0`，端口默认 `8765`。配置解析为 `CLI flag > 环境变量 > agentbeacon.json（--config 指定，或 exe 旁 / 当前目录自动发现）> 默认`；`scripts/windows/install.ps1` 提供一键安装 + 开机自启 + 后台驻留。
+- 鉴权为显式双模式：`--token <t>` / `AGENTBEACON_TOKEN` / 配置文件 `"token"`（共享 Bearer，拒绝无头请求）或 `--no-auth` / `AGENTBEACON_NO_AUTH=1` / `"no_auth": true`（完全关闭鉴权，仅限开发/可信内网）。同一来源内两者互斥；都不给时拒绝启动。详见 [protocol.md](protocol.md) §6。
 - Named Pipe 默认启用：pipe 名 `AgentBeacon.Status`。`--pipe <name>` 或 `AGENTBEACON_PIPE=<name>` 可覆盖，`--no-pipe` 显式关闭（主要用于测试与无 UI 场景）。
 
 Receiver 不应该：

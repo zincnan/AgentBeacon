@@ -453,9 +453,9 @@ class TestCliPortValidation(unittest.TestCase):
 
 
 class TestCliAuthModeValidation(unittest.TestCase):
-    """Round 6: exactly one auth mode must be chosen explicitly —
-    --token (shared bearer) or --no-auth (auth disabled, dev / trusted
-    LAN). Refusing to start otherwise is the safe default."""
+    """Round 9 auth semantics: empty token = auth off (with a warning),
+    non-empty token = shared bearer. Explicit --no-auth still exists as an
+    override; within one layer, token + no-auth together is an error."""
 
     def _run(self, *extra):
         env = {k: v for k, v in os.environ.items()
@@ -474,15 +474,68 @@ class TestCliAuthModeValidation(unittest.TestCase):
         )
         return proc.returncode, proc.stderr
 
-    def test_no_auth_mode_chosen_returns_4(self):
-        code, err = self._run()
-        self.assertEqual(code, 4, err)
-        self.assertIn("auth mode", err)
-
     def test_no_auth_conflicting_with_token_returns_4(self):
         code, err = self._run("--no-auth", "--token", "t")
         self.assertEqual(code, 4, err)
         self.assertIn("mutually exclusive", err)
+
+
+class TestConfigFileValidation(unittest.TestCase):
+    """Round 7: agentbeacon.json supplies bind/port/token/no_auth/debug/pipe.
+    Invalid values in the file must refuse to start (exit 4) before binding."""
+
+    def _run_with_config(self, config_body, *extra):
+        import tempfile
+        import json as _json
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write(_json.dumps(config_body))
+            path = f.name
+        try:
+            env = {k: v for k, v in os.environ.items()
+                   if k not in ("AGENTBEACON_TOKEN", "AGENTBEACON_NO_AUTH")}
+            proc = subprocess.run(
+                [
+                    "dotnet", "run",
+                    "--project", RECEIVER_PROJECT,
+                    "-c", "Debug", "--no-build",
+                    "--",
+                    "--bind", "127.0.0.1",
+                    "--port", "8798",
+                    "--config", path,
+                    *extra,
+                ],
+                capture_output=True, text=True, timeout=15, env=env,
+            )
+            return proc.returncode, proc.stderr
+        finally:
+            os.unlink(path)
+
+    def test_out_of_range_port_in_config_returns_4(self):
+        code, err = self._run_with_config({"port": 70000})
+        self.assertEqual(code, 4, err)
+        self.assertIn("port", err)
+
+    def test_token_and_no_auth_in_config_returns_4(self):
+        code, err = self._run_with_config({"token": "t", "no_auth": True})
+        self.assertEqual(code, 4, err)
+        self.assertIn("mutually exclusive", err)
+
+    def test_malformed_config_json_returns_4(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write("{not json")
+            path = f.name
+        try:
+            proc = subprocess.run(
+                ["dotnet", "run", "--project", RECEIVER_PROJECT,
+                 "-c", "Debug", "--no-build", "--",
+                 "--config", path],
+                capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(proc.returncode, 4, proc.stderr)
+            self.assertIn("invalid JSON", proc.stderr)
+        finally:
+            os.unlink(path)
 
 
 if __name__ == "__main__":

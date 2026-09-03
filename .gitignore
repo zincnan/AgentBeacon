@@ -32,3 +32,8 @@ tests/.tmp/
 
 # Local review artifacts (intentionally narrow, not *.diff)
 docs/diff.diff
+# Local AgentBeacon config (repo ships agentbeacon.example.json)
+agentbeacon.json
+
+# Portable publish output
+dist/

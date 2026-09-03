@@ -111,7 +111,39 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(tok, "t2")
 
     def test_missing(self):
-        self.assertEqual(adapter.resolve_config({}), (None, None))
+        self.assertEqual(adapter.resolve_config(
+            {"AGENTBEACON_CONFIG": "/nonexistent/ab.json"}), (None, None))
+
+    def test_config_file_supplies_url_and_token(self):
+        # Round 7: ~/.agentbeacon.json is the edit-once fallback layer.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ab.json")
+            with open(path, "w") as f:
+                json.dump({"url": "http://from-file:8765", "token": "ft"}, f)
+            url, tok = adapter.resolve_config({"AGENTBEACON_CONFIG": path})
+            self.assertEqual(url, "http://from-file:8765")
+            self.assertEqual(tok, "ft")
+
+    def test_env_beats_config_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ab.json")
+            with open(path, "w") as f:
+                json.dump({"url": "http://from-file:8765", "token": "ft"}, f)
+            url, tok = adapter.resolve_config({
+                "AGENTBEACON_CONFIG": path,
+                "AGENTBEACON_URL": "http://from-env:8765",
+            })
+            self.assertEqual(url, "http://from-env:8765")
+            self.assertEqual(tok, "ft", "token still falls through to file")
+
+    def test_broken_config_file_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ab.json")
+            with open(path, "w") as f:
+                f.write("{not json")
+            self.assertEqual(
+                adapter.resolve_config({"AGENTBEACON_CONFIG": path}),
+                (None, None))
 
 
 class TestThrottle(unittest.TestCase):
@@ -198,7 +230,7 @@ class TestHookScriptEndToEnd(unittest.TestCase):
         cls.srv.shutdown()
         cls.srv.server_close()
 
-    def run_hook(self, payload, token="test-token"):
+    def run_hook(self, payload, token="test-token", extra_env=None):
         env = dict(os.environ)
         env["AGENTBEACON_URL"] = f"http://127.0.0.1:{self.port}"
         if token is None:
@@ -207,6 +239,8 @@ class TestHookScriptEndToEnd(unittest.TestCase):
             env["AGENTBEACON_TOKEN"] = token
         env["TMPDIR"] = self.tmp
         env.pop("CLAUDE_PLUGIN_OPTION_AGENTBEACON_URL", None)
+        if extra_env:
+            env.update(extra_env)
         p = subprocess.run(
             [sys.executable, HOOK], input=payload.encode(),
             capture_output=True, env=env, timeout=15)
@@ -305,6 +339,25 @@ class TestHookScriptEndToEnd(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(RecordingReceiver.posts), 1)
         self.assertIsNone(RecordingReceiver.posts[0]["auth"])
+
+    def test_config_file_drives_end_to_end_post(self):
+        # Round 7: ~/.agentbeacon.json (here via AGENTBEACON_CONFIG)
+        # supplies BOTH the url and the token when env has neither.
+        cfg = os.path.join(self.tmp, "ab.json")
+        with open(cfg, "w") as f:
+            json.dump({"url": f"http://127.0.0.1:{self.port}",
+                       "token": "file-tok"}, f)
+        RecordingReceiver.posts.clear()
+        p = self.run_hook(event("SessionStart", session="e2e-9"),
+                          token=None,
+                          extra_env={"AGENTBEACON_CONFIG": cfg,
+                                     "AGENTBEACON_URL": ""})
+        # empty AGENTBEACON_URL above must NOT shadow the file (env only
+        # wins when non-empty)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(len(RecordingReceiver.posts), 1)
+        self.assertEqual(RecordingReceiver.posts[0]["auth"],
+                         "Bearer file-tok")
 
 
 if __name__ == "__main__":
