@@ -80,7 +80,7 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 completed 灯在 §3 中按 5 分钟老化，老化后在 `_hiddenCompleted` 表里留下一条 `(session_id, updated_at)` 墓碑。在此之后：
 
 - **同一 `(session_id, updated_at)` 的 completed 重发**：灯不复活，卡片不重弹。测试 `Store_Completed_Hidden_SameSnapshotDoesNotReappear` 覆盖。
-- **同一 session 的 newer completed（updated_at 严格更大）**：清除墓碑，按新的 completed 处理（重新显示灯、重新弹 5s 卡片）。测试 `Store_Completed_Hidden_NewerCompletedReappears` 覆盖。
+- **同一 session 的 newer completed（updated_at 严格更大）**：清除墓碑，按新的 completed 处理（重新显示灯、重新弹 30s 卡片）。测试 `Store_Completed_Hidden_NewerCompletedReappears` 覆盖。
 - **同一 session 的非 completed 事件**（running / approval / failed）：清除墓碑，按新状态正常显示。测试 `Store_Completed_Hidden_RunningReappears` 覆盖。
 
 不允许用灰色 / idle / unknown 等第五种状态表达“隐藏”——隐藏只是“当前没有灯要画”的状态，不是 UI 状态。
@@ -113,7 +113,9 @@ Indicator 的 Core 层作为防御性约束再次校验：构造 `SessionViewMod
 
 WPF DispatcherTimer / 动画本身不做单元测试；上述语义在 Core 层有等价的 dedup / stay-policy / tombstone 行为覆盖测试。
 
-## 9. 灯的右键关闭与拖拽（Round 5）
+## 9. 灯的右键操作与拖拽（Round 5 / Round 12）
+
+**重命名**：右键 →「重命名此灯」，标签就地变输入框（Enter 确认 / Esc 取消 / 失焦提交，最长 24 字符）；「恢复默认名称」清除自定义。自定义名按 `session_id` 持久化到安装目录 `lamp-labels.json`（Indicator 重启仍生效）；**新 session_id 回到默认 agent 名**——改名只对当前会话有意义。Tooltip 始终显示真实 `agent · session_id · host`，改名不丢身份。快照刷新不会覆盖正在编辑的文本。
 
 **右键关闭（dismiss）**：右键任意灯模块 →「关闭此灯」。该模块被**完全拆除**（不保留隐藏窗口，省资源），同时收回其卡片、取消 timer。
 

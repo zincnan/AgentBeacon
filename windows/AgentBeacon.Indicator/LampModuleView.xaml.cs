@@ -86,12 +86,85 @@ public partial class LampModuleView : UserControl
     public string Status { get; private set; } = "";
 
     /// <summary>
+    /// The session's agent name (default label). Kept separately so
+    /// 恢复默认名称 can restore it after a custom label was applied —
+    /// AgentLabelText itself may hold the custom text.
+    /// </summary>
+    public string DefaultLabelText { get; set; } = "";
+
+    /// <summary>
     /// Raised when the user picks "关闭此灯" in the module's context
     /// menu. MainWindow tears the module down and records a dismissal
     /// watermark; the lamp is only rebuilt when the session produces a
     /// newer event.
     /// </summary>
     public event EventHandler? Dismissed;
+
+    /// <summary>
+    /// Raised when the user commits a rename from the in-place edit box
+    /// (Enter). Carries the new label; empty string means "reset to the
+    /// default agent name". MainWindow persists it per session_id.
+    /// </summary>
+    public event EventHandler<string>? Renamed;
+
+    /// <summary>
+    /// Raised when the user picks "重命名此灯". MainWindow no-ops; the
+    /// module itself switches its label into edit mode.
+    /// </summary>
+    public event EventHandler? RenameRequested;
+
+    /// <summary>
+    /// True while the label edit box is open (snapshot updates must not
+    /// overwrite the label text mid-edit).
+    /// </summary>
+    public bool IsRenaming => LabelEdit.Visibility == Visibility.Visible;
+
+    /// <summary>
+    /// Enter in-place rename mode: swap the label TextBlock for an edit
+    /// box pre-filled with the current text, selected, keyboard-focused
+    /// (Focusable stays false on the WINDOW; the TextBox itself is
+    /// focusable and does not activate the window).
+    /// </summary>
+    public void BeginRename()
+    {
+        LabelEdit.Text = AgentLabel.Text;
+        AgentLabel.Visibility = Visibility.Collapsed;
+        LabelEdit.Visibility = Visibility.Visible;
+        LabelEdit.Focus();
+        LabelEdit.SelectAll();
+    }
+
+    private void EndRename(bool commit)
+    {
+        if (LabelEdit.Visibility != Visibility.Visible) return;
+        LabelEdit.Visibility = Visibility.Collapsed;
+        AgentLabel.Visibility = Visibility.Visible;
+        if (commit)
+        {
+            var label = LabelEdit.Text.Trim();
+            Renamed?.Invoke(this, label);
+        }
+    }
+
+    private void LabelEdit_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter)
+        {
+            e.Handled = true;
+            EndRename(commit: true);
+        }
+        else if (e.Key == System.Windows.Input.Key.Escape)
+        {
+            e.Handled = true;
+            EndRename(commit: false);
+        }
+    }
+
+    private void LabelEdit_LostKeyboardFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
+    {
+        // Clicking elsewhere = commit (matches common rename UX).
+        EndRename(commit: true);
+    }
 
     /// <summary>
     /// Apply a (possibly changed) status: refresh the three lights and,
@@ -172,6 +245,15 @@ public partial class LampModuleView : UserControl
             {
                 Dismissed?.Invoke(this, EventArgs.Empty);
             }
+        };
+        RenameItem.Click += (_, _) =>
+        {
+            RenameRequested?.Invoke(this, EventArgs.Empty);
+        };
+        ResetNameItem.Click += (_, _) =>
+        {
+            EndRename(commit: false);
+            Renamed?.Invoke(this, string.Empty); // empty = back to default
         };
     }
 

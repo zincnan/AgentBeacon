@@ -34,6 +34,10 @@
 
     <UserControl.ContextMenu>
         <ContextMenu>
+            <MenuItem x:Name="RenameItem"
+                      Header="重命名此灯"/>
+            <MenuItem x:Name="ResetNameItem"
+                      Header="恢复默认名称"/>
             <MenuItem x:Name="DismissItem"
                       Header="关闭此灯（该会话有新状态时自动恢复）"/>
         </ContextMenu>
@@ -43,13 +47,30 @@
         <Border Style="{StaticResource AgentLabelStyle}"
                 ToolTip="{Binding TooltipText}"
                 Margin="0,0,0,2">
-            <TextBlock x:Name="AgentLabel"
-                       FontSize="10.5"
-                       Foreground="#D8DEE4"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center"
-                       MaxWidth="68"
-                       TextTrimming="CharacterEllipsis"/>
+            <Grid>
+                <TextBlock x:Name="AgentLabel"
+                           FontSize="10.5"
+                           Foreground="#D8DEE4"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           MaxWidth="68"
+                           TextTrimming="CharacterEllipsis"/>
+                <!-- 就地重命名输入框（右键 → 重命名此灯；Enter 确认 / Esc 取消） -->
+                <TextBox x:Name="LabelEdit"
+                         FontSize="10.5"
+                         MaxLength="24"
+                         MaxWidth="80"
+                         Visibility="Collapsed"
+                         Background="#FF15181C"
+                         Foreground="#FFE6EAEE"
+                         BorderBrush="#FF7A8490"
+                         BorderThickness="1"
+                         Padding="2,0"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         KeyDown="LabelEdit_KeyDown"
+                         LostKeyboardFocus="LabelEdit_LostKeyboardFocus"/>
+            </Grid>
         </Border>
 
         <Border Width="42"

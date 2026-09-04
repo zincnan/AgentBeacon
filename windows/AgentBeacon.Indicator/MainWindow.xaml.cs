@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -55,6 +56,15 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, DateTimeOffset> _sessionUpdatedAt = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// User-renamed lamp labels: session_id → display label. Persisted to
+    /// lamp-labels.json next to agentbeacon.json so a restart keeps the
+    /// names while the session is still alive. New session ids (a fresh
+    /// codex/claude session) start from the default agent name — the
+    /// rename is per session, by design.
+    /// </summary>
+    private readonly Dictionary<string, string> _customLabels = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// True once the user has dragged the indicator column somewhere:
     /// stops the automatic snap-back to the right edge. Resets when the
     /// process exits (position is not persisted to disk).
@@ -95,6 +105,8 @@ public partial class MainWindow : Window
         };
         _tickTimer.Tick += (_, _) => _host?.Tick(DateTimeOffset.UtcNow);
         _tickTimer.Start();
+
+        LoadCustomLabels();
     }
 
     private IndicatorHost? _host;
@@ -182,23 +194,36 @@ public partial class MainWindow : Window
         for (int i = 0; i < shown.Count; i++)
         {
             var s = shown[i];
+            // Custom label wins when the user renamed this session; the
+            // tooltip (driven by the VM) keeps the true agent/session/host.
+            var displayLabel = _customLabels.TryGetValue(s.SessionId, out var custom)
+                && !string.IsNullOrWhiteSpace(custom)
+                ? custom
+                : s.Agent;
             if (!_modules.TryGetValue(s.SessionId, out var module))
             {
                 module = new LampModuleView
                 {
-                    AgentLabelText = s.Agent,
+                    AgentLabelText = displayLabel,
+                    DefaultLabelText = s.Agent,
                     TooltipText = s.TooltipText,
                     SessionId = s.SessionId,
                 };
                 module.ApplyStatus(s.Status); // first appearance: no blink
                 module.Dismissed += OnModuleDismissed;
+                module.Renamed += OnModuleRenamed;
+                module.RenameRequested += OnModuleRenameRequested;
                 module.MouseLeftButtonDown += Module_MouseLeftButtonDown;
                 ModuleStack.Children.Insert(i, module);
                 _modules[s.SessionId] = module;
             }
             else
             {
-                module.AgentLabelText = s.Agent;
+                if (!module.IsRenaming)
+                {
+                    module.AgentLabelText = displayLabel;
+                }
+                module.DefaultLabelText = s.Agent;
                 module.TooltipText = s.TooltipText;
                 // Status transitions to a non-running state blink the
                 // newly-lit light (LampModuleView.ApplyStatus).
@@ -405,6 +430,88 @@ public partial class MainWindow : Window
                 card.SlideBackToRightOfModule();
                 // Cleanup happens via RetractCompleted.
             }
+        }
+    }
+
+    /// <summary>
+    /// 右键 → 重命名此灯：让该模块的标签进入就地编辑模式。提交时经
+    /// <see cref="OnModuleRenamed"/> 持久化。
+    /// </summary>
+    private void OnModuleRenameRequested(object? sender, EventArgs e)
+    {
+        if (sender is LampModuleView module && module.SessionId is not null)
+        {
+            module.BeginRename();
+        }
+    }
+
+    /// <summary>
+    /// 重命名提交（label 为空字符串 = 恢复默认 agent 名）。更新内存映射、
+    /// 立即刷新标签文本并持久化到 lamp-labels.json。
+    /// </summary>
+    private void OnModuleRenamed(object? sender, string label)
+    {
+        if (sender is not LampModuleView module || module.SessionId is not { } sessionId)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            _customLabels.Remove(sessionId);
+            module.AgentLabelText = module.DefaultLabelText;
+        }
+        else
+        {
+            _customLabels[sessionId] = label;
+            module.AgentLabelText = label;
+        }
+        SaveCustomLabels();
+    }
+
+    private static string LabelsPath =>
+        Path.Combine(Directory.GetCurrentDirectory(), "lamp-labels.json");
+
+    private void LoadCustomLabels()
+    {
+        try
+        {
+            if (!File.Exists(LabelsPath)) return;
+            var doc = System.Text.Json.JsonSerializer.Deserialize<
+                Dictionary<string, string>>(File.ReadAllText(LabelsPath));
+            if (doc is null) return;
+            foreach (var kv in doc)
+            {
+                if (!string.IsNullOrWhiteSpace(kv.Key)
+                    && !string.IsNullOrWhiteSpace(kv.Value))
+                {
+                    _customLabels[kv.Key] = kv.Value;
+                }
+            }
+        }
+        catch (Exception ex)  // best-effort: labels are cosmetic
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[AgentBeacon] load lamp labels failed: {ex.Message}");
+        }
+    }
+
+    private void SaveCustomLabels()
+    {
+        try
+        {
+            var options = new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            };
+            File.WriteAllText(LabelsPath,
+                System.Text.Json.JsonSerializer.Serialize(_customLabels, options));
+        }
+        catch (Exception ex)  // best-effort: labels are cosmetic
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[AgentBeacon] save lamp labels failed: {ex.Message}");
         }
     }
 

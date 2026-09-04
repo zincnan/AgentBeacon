@@ -62,7 +62,7 @@ Agent Runtime 在以下时刻会产生可观测的状态变化：
 
 ### 2.2 Hook
 
-Hook 是 Agent Runtime 的状态事件源，挂在 Agent Runtime 提供的生命周期事件上。第一个参考 Adapter 是 Claude Code，已以插件形态实现（`plugins/claude-code/`，见 [adapter-claude-code.md](adapter-claude-code.md)）。
+Hook 是 Agent Runtime 的状态事件源，挂在 Agent Runtime 提供的生命周期事件上。已有两个 in-tree Adapter：Claude Code 插件（`plugins/claude-code/`，见 [adapter-claude-code.md](adapter-claude-code.md)）与 Codex CLI hooks（`plugins/codex/`，见 [adapter-codex.md](adapter-codex.md)）。
 
 Hook 的职责：
 
@@ -75,7 +75,7 @@ Hook 必须做到：
 - **立即上报**：不做 debounce、不做合并、不做节流。`approval` 尤其要在进入等待的那一刻立刻发出（让用户在超时之前能看到）。
 - **不修改、不补全业务字段**：除了把状态事件翻译成协议字段，不做任何业务推断。
 
-Claude Code 的具体生命周期事件到四个状态之间的映射，等真正实现 Claude Code 参考 Adapter 时依据 Claude Code 自身的 Hook / Plugin API 确定。
+两个 Adapter 的事件到四状态的具体映射分别见 [adapter-claude-code.md](adapter-claude-code.md) 与 [adapter-codex.md](adapter-codex.md)。
 
 Hook 不应该：
 
@@ -165,7 +165,10 @@ Indicator 是 Windows 桌面右上角的状态灯与通知卡片 UI，作为**�
 - 维护 `completed` 状态 5 分钟后的状态灯自动清理
 - 状态灯 hover 显示 `agent / session_id / host` tooltip（whole-event replacement：`agent` 或 `host` 变化都会刷新 tooltip）
 - completed 灯老化后写入 `_hiddenCompleted` 墓碑，避免无关 POST 触发的 full snapshot 复活同一 completed 灯
-- 卡片严格从屏幕右侧滑入；状态灯与卡片均使用 `ShowActivated=False` + `WS_EX_NOACTIVATE`，**不会抢占前台焦点**
+- 卡片从所属灯模块左侧弹出/停留/收回，多卡碰撞自动避让
+- 状态变化时非 running 的灯闪烁数秒（真实红绿灯语义）；亮灯带同色辉光
+- 托盘图标（右键退出）；灯右键支持重命名（持久化到 `lamp-labels.json`）与关闭
+- 状态灯与卡片均使用 `ShowActivated=False` + `WS_EX_NOACTIVATE`，**不会抢占前台焦点**
 
 Indicator 是 C# / WPF，目标框架为 `net10.0-windows`，**只能在 Windows 上运行**。其纯逻辑层（`SessionViewModelStore` 等）单独打成 `net10.0` 类库以便在 Linux 上做单元测试；WPF 视觉层仅做渲染。
 
@@ -219,7 +222,5 @@ Indicator 是 C# / WPF，目标框架为 `net10.0-windows`，**只能在 Windows
 - 权限审批的回传链路（仅做单向状态上报）
 - 复杂认证 / 用户账号 / 多租户（仅共享 Bearer Token）
 - SQLite 或任何持久化存储
-- Windows Service / 安装器 / 自动启动（v1 故意不加 Windows-only 代码）
-- Claude Code 参考 Adapter（仅在 Receiver + notify 跑通后再做）
 - 卡片点击交互、设置页、多语言
 - 跨平台 Indicator（v1 Indicator 仅 Windows；macOS / Linux 留待后续）
