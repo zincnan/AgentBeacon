@@ -1,5 +1,7 @@
 # AgentBeacon
 
+[English](README.en.md)
+
 > 你的 AI Agent 们，在你 Windows 桌面右上角的一排"红绿灯"。
 
 同时开着好几个 Claude Code / Codex 会话干活时，你大概也有这些时刻：
