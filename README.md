@@ -141,12 +141,18 @@ claude plugin uninstall agentbeacon@agentbeacon
 codex plugin marketplace add /path/to/AgentBeacon
 codex plugin add agentbeacon-codex@agentbeacon
 
-# 卸载
+# 更新（改了插件代码后：本地路径的 marketplace 是实时读取的，重装即更新）
 codex plugin remove agentbeacon-codex@agentbeacon
-# （连 marketplace 一起清：codex plugin marketplace remove agentbeacon）
+codex plugin add agentbeacon-codex@agentbeacon
+
+# 查看状态
+codex plugin list
+
+# 卸载（连 marketplace 一起清：codex plugin marketplace remove agentbeacon）
+codex plugin remove agentbeacon-codex@agentbeacon
 ```
 
-⚠️ 装完必须做一步：打开 `codex`，运行 `/hooks`，对 AgentBeacon 条目执行 **信任（trust）**——Codex 默认跳过未受信的 hooks。
+⚠️ 装完必须做一步：打开 `codex`，运行 `/hooks`，对 AgentBeacon 条目执行 **信任（trust）**——Codex 默认跳过未受信的 hooks。更新/重装插件后需重新信任。
 
 旧版 Codex（无 `plugin` 子命令）可用合并脚本兜底：
 `python3 plugins/codex/install.py`（卸载 `--remove`），同样需要 `/hooks` 信任。
