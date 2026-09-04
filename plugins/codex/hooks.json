@@ -1,0 +1,75 @@
+{
+  "_comment": "AgentBeacon adapter for Codex CLI. This is a TEMPLATE: install via plugins/codex/install.py (or scripts/install-codex-hook.py), which renders __AGENTBEACON_HOOK__ to an absolute script path and merges this file into ~/.codex/hooks.json.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __AGENTBEACON_HOOK__"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __AGENTBEACON_HOOK__"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __AGENTBEACON_HOOK__"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __AGENTBEACON_HOOK__"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __AGENTBEACON_HOOK__"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __AGENTBEACON_HOOK__"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __AGENTBEACON_HOOK__"
+          }
+        ]
+      }
+    ]
+  }
+}

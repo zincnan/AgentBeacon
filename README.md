@@ -101,7 +101,9 @@ dotnet run --project receiver -c Release -- --bind 0.0.0.0 --port 8765 --token "
 dotnet run --project windows\AgentBeacon.Indicator -c Release --no-build
 ```
 
-### 2. Agent 端：插件（装一次永久生效）
+### 2. Agent 端：接入（装一次永久生效）
+
+**Claude Code 用户 —— 插件方式**：
 
 ```bash
 # 安装
@@ -123,7 +125,19 @@ claude plugin enable agentbeacon
 claude plugin uninstall agentbeacon@agentbeacon
 ```
 
-配置也只动一个文件 —— 填一次接收端地址即可：
+**Codex CLI 用户 —— hooks 方式**：
+
+```bash
+# 安装：把 AgentBeacon 的 hooks 合并进 ~/.codex/hooks.json（不动已有 hooks）
+python3 plugins/codex/install.py
+
+# 卸载
+python3 plugins/codex/install.py --remove
+```
+
+⚠️ 装完必须做一步：打开 `codex`，运行 `/hooks`，对 AgentBeacon 条目执行 **信任（trust）**——Codex 默认跳过未受信的 hooks。
+
+**共用配置**（两种 Agent 都读这一个文件，填一次即可）：
 
 ```jsonc
 // ~/.agentbeacon.json
@@ -133,7 +147,7 @@ claude plugin uninstall agentbeacon@agentbeacon
 }
 ```
 
-之后任何目录直接 `claude`，红绿灯自动跟随所有会话。其它 Agent / 脚本用一个 HTTP POST（或 `notify/agent_notify.py`）即可接入，协议见 [docs/protocol.md](docs/protocol.md)。
+之后任何目录直接 `claude` / `codex`，红绿灯自动跟随所有会话。其它 Agent / 脚本用一个 HTTP POST（或 `notify/agent_notify.py`）即可接入，协议见 [docs/protocol.md](docs/protocol.md)。
 
 ### 3. 验证
 
@@ -165,14 +179,16 @@ Indicator（Windows，WPF 红绿灯面板）
 - **Round 8**：发布包（WSL 里 `bash scripts/dist.sh` 交叉编译 / Windows 里 `publish.ps1`，单文件夹自包含绿色版，接收方双击 `install.bat` 零环境依赖）
 - **Round 9**：托盘图标（右键退出）+ 单实例守卫 + 配置极简化（`token` 空 = 免 key）
 - **Round 10**：浅色卡片 + 状态色装饰条、灯变化闪烁（非 running 变更闪 ~4.6s）、卡片停留统一 30s、灯亮度提升（中灰灯罩 + 亮灯辉光）
+- **Round 11**：Codex CLI Adapter（`~/.codex/hooks.json` 接入，含信任引导、看门狗）
 
-自动化测试 **159 个 unique tests** 全部通过（Python 3 套 + C# 2 套；C# 套件在 Linux 与 Windows 原生 .NET 上各跑一遍同一组用例）：
+自动化测试 **178 个 unique tests** 全部通过（Python 3 套 + C# 2 套；C# 套件在 Linux 与 Windows 原生 .NET 上各跑一遍同一组用例）：
 
 | 套件 | 数量 |
 | --- | --- |
 | `tests/test_notify.py` | 8 |
 | `tests/test_receiver.py` | 42 |
 | `tests/test_hook_adapter.py` | 33 |
+| `tests/test_codex_adapter.py` | 19 |
 | `tests/Receiver.IpcTests` | 18 |
 | `tests/Indicator.CoreTests` | 58 |
 
@@ -184,5 +200,6 @@ Indicator（Windows，WPF 红绿灯面板）
 - [docs/protocol.md](docs/protocol.md) — v1 HTTP 状态上报协议（含鉴权双模式）
 - [docs/ui-policy.md](docs/ui-policy.md) — UI 行为规则（canonical）
 - [docs/adapter-claude-code.md](docs/adapter-claude-code.md) — Claude Code Adapter 安装与映射
+- [docs/adapter-codex.md](docs/adapter-codex.md) — Codex CLI Adapter 安装与映射
 - [docs/round2.md](docs/round2.md) — Round 2 设计与运行说明（历史文档）
 - [docs/wsl中开发时的调试说明.md](docs/wsl中开发时的调试说明.md) — WSL 开发时的手工调试指南
