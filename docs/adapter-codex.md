@@ -7,11 +7,12 @@ AgentBeacon 的第二个 Adapter，面向 OpenAI Codex CLI（开源终端 agent�
 **插件方式（推荐，Codex 0.144+ 实测）**：
 
 ```bash
-codex plugin marketplace add /path/to/AgentBeacon
+codex plugin marketplace add /path/to/AgentBeacon      # 仓库根目录；GitHub 仓库可直接写 owner/repo
 codex plugin add agentbeacon-codex@agentbeacon
 ```
 
-插件捆绑 `hooks/hooks.json`，Codex 通过 `PLUGIN_ROOT` 环境变量注入插件根路径。
+- `marketplace add` 指向的必须是**仓库根目录**：marketplace 清单是根下的 `.claude-plugin/marketplace.json`（Codex 兼容该 Claude 格式），只传 `plugins/codex` 单个文件夹是装不上的。
+- 插件捆绑 `hooks/hooks.json`，Codex 通过 `PLUGIN_ROOT` 环境变量注入插件根路径。
 
 **合并脚本方式（旧版 Codex 兜底）**：
 

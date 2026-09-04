@@ -132,6 +132,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Snapshot-level diagnostics: when a user reports "a lamp
+        // vanished", this line shows exactly what the Receiver sent at
+        // that moment (session ids + statuses), separating
+        // "receiver stopped sending the session" from
+        // "indicator failed to render it". Same log file as
+        // IndicatorHost's callback-error entries.
+        try
+        {
+            var line = $"[{DateTimeOffset.UtcNow:O}] snapshot: {sessions.Count} sessions " +
+                       $"[{string.Join(", ", sessions.Select(s => $"{s.SessionId}:{s.Status}"))}]{Environment.NewLine}";
+            File.AppendAllText(
+                Path.Combine(Path.GetTempPath(), "AgentBeacon-indicator.log"), line);
+        }
+        catch { /* diagnostics only */ }
+
         if (sessions.Count == 0)
         {
             if (IsVisible) Hide();

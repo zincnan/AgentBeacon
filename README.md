@@ -102,14 +102,21 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install.ps1
 
 ### 2. Agent 端
 
+两个插件都通过 marketplace 安装，marketplace 清单（`.claude-plugin/marketplace.json`）位于**仓库根目录**——所以 `marketplace add` 指向的必须是整个仓库，不是单个插件文件夹。先在 Agent 所在机器上拿到仓库：
+
+```bash
+git clone https://github.com/<you>/AgentBeacon
+# 局域网传文件夹也可以：scp -r 整个仓库到远程任意位置
+```
+
 **Claude Code**：
 
 ```bash
-claude plugin marketplace add /path/to/AgentBeacon
+claude plugin marketplace add /path/to/AgentBeacon     # 仓库根目录；GitHub 仓库可直接写 <you>/AgentBeacon
 claude plugin install agentbeacon@agentbeacon
 ```
 
-**Codex CLI**：
+**Codex CLI**（Codex 兼容同一份 marketplace 清单，无需单独配置）：
 
 ```bash
 codex plugin marketplace add /path/to/AgentBeacon
