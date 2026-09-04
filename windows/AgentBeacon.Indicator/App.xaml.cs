@@ -56,7 +56,17 @@ public partial class App : Application
         }
         if (string.IsNullOrEmpty(pipeName))
         {
-            pipeName = IpcConstants.DefaultPipeName;
+            // Same derivation as the Receiver: prefix + port from the
+            // shared agentbeacon.json (default 8765).
+            var cfgFileForPort = AgentBeaconConfig.Discover();
+            int port = 8765;
+            if (cfgFileForPort is not null
+                && AgentBeaconConfig.TryLoad(cfgFileForPort, out var cfgPort, out _)
+                && cfgPort?.Port is int p)
+            {
+                port = p;
+            }
+            pipeName = IpcConstants.PipeNameForPort(port);
         }
 
         // Create the window but DO NOT Show it. The window is made

@@ -155,7 +155,10 @@ public sealed record CliOptions(
         }
         else
         {
-            pipe = IpcConstants.DefaultPipeName;
+            // Default pipe name includes the port: two Receivers on
+            // different ports (or a dev instance next to an installed one)
+            // must not broadcast on the same pipe.
+            pipe = IpcConstants.PipeNameForPort(port);
         }
 
         // ---- Auth (Round 9 semantics) ----
