@@ -1,0 +1,5 @@
+{
+  "name": "agentbeacon-codex",
+  "version": "0.1.0",
+  "description": "Report Codex CLI session status (running / approval / completed / failed) to an AgentBeacon Receiver."
+}

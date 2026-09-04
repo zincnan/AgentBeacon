@@ -1,12 +1,12 @@
 {
-  "_comment": "AgentBeacon adapter for Codex CLI. This is a TEMPLATE: install via plugins/codex/install.py (or scripts/install-codex-hook.py), which renders __AGENTBEACON_HOOK__ to an absolute script path and merges this file into ~/.codex/hooks.json.",
+  "description": "AgentBeacon status adapter for Codex CLI (plugin-bundled hooks)."
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __AGENTBEACON_HOOK__"
+            "command": "python3 "${PLUGIN_ROOT}/scripts/agentbeacon_codex_hook.py""
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __AGENTBEACON_HOOK__"
+            "command": "python3 "${PLUGIN_ROOT}/scripts/agentbeacon_codex_hook.py""
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __AGENTBEACON_HOOK__"
+            "command": "python3 "${PLUGIN_ROOT}/scripts/agentbeacon_codex_hook.py""
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __AGENTBEACON_HOOK__"
+            "command": "python3 "${PLUGIN_ROOT}/scripts/agentbeacon_codex_hook.py""
           }
         ]
       }
@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __AGENTBEACON_HOOK__"
+            "command": "python3 "${PLUGIN_ROOT}/scripts/agentbeacon_codex_hook.py""
           }
         ]
       }
@@ -56,7 +56,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __AGENTBEACON_HOOK__"
+            "command": "python3 "${PLUGIN_ROOT}/scripts/agentbeacon_codex_hook.py""
           }
         ]
       }
@@ -66,7 +66,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __AGENTBEACON_HOOK__"
+            "command": "python3 "${PLUGIN_ROOT}/scripts/agentbeacon_codex_hook.py""
           }
         ]
       }

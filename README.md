@@ -134,17 +134,22 @@ claude plugin enable agentbeacon
 claude plugin uninstall agentbeacon@agentbeacon
 ```
 
-**Codex CLI 用户 —— hooks 方式**：
+**Codex CLI 用户 —— 插件方式**：
 
 ```bash
-# 安装：把 AgentBeacon 的 hooks 合并进 ~/.codex/hooks.json（不动已有 hooks）
-python3 plugins/codex/install.py
+# 安装
+codex plugin marketplace add /path/to/AgentBeacon
+codex plugin add agentbeacon-codex@agentbeacon
 
 # 卸载
-python3 plugins/codex/install.py --remove
+codex plugin remove agentbeacon-codex@agentbeacon
+# （连 marketplace 一起清：codex plugin marketplace remove agentbeacon）
 ```
 
 ⚠️ 装完必须做一步：打开 `codex`，运行 `/hooks`，对 AgentBeacon 条目执行 **信任（trust）**——Codex 默认跳过未受信的 hooks。
+
+旧版 Codex（无 `plugin` 子命令）可用合并脚本兜底：
+`python3 plugins/codex/install.py`（卸载 `--remove`），同样需要 `/hooks` 信任。
 
 **共用配置**（两种 Agent 都读这一个文件，填一次即可）：
 

@@ -4,18 +4,27 @@ AgentBeacon 的第二个 Adapter，面向 OpenAI Codex CLI（开源终端 agent�
 
 ## 安装
 
+**插件方式（推荐，Codex 0.144+ 实测）**：
+
 ```bash
-python3 plugins/codex/install.py        # 合并写入 ~/.codex/hooks.json
+codex plugin marketplace add /path/to/AgentBeacon
+codex plugin add agentbeacon-codex@agentbeacon
 ```
 
-安装脚本会：
-- 把 `hooks.json` 模板里的脚本路径渲染为绝对路径（Codex 以 `env_clear()` 运行 hook 命令，`$HOME` 不可依赖）
-- 只合并/替换 AgentBeacon 自己的事件组，**不动你已有的其它 hooks**；已存在的 0 字节占位 `hooks.json` 会被正确接管；非空且非法的 JSON 会被拒绝（绝不覆盖）
-- 卸载：`python3 plugins/codex/install.py --remove`
+插件捆绑 `hooks/hooks.json`，Codex 通过 `PLUGIN_ROOT` 环境变量注入插件根路径。
+
+**合并脚本方式（旧版 Codex 兜底）**：
+
+```bash
+python3 plugins/codex/install.py        # 合并写入 ~/.codex/hooks.json
+python3 plugins/codex/install.py --remove
+```
+
+脚本方式会把模板里的路径渲染为绝对路径（Codex 以 `env_clear()` 运行 hook 命令，`$HOME` 不可依赖）；只合并/替换 AgentBeacon 自己的事件组，不动已有 hooks。
 
 ### 必做一步：信任 hooks
 
-Codex 默认**跳过未受信的命令 hook**。安装后打开 `codex`，运行 `/hooks`，对 AgentBeacon 的条目执行 review+trust（按 hook 定义哈希记录）。自动化场景可用 `--dangerously-bypass-hook-trust`，但正常使用请走 `/hooks`。
+两种安装方式都一样：Codex 默认**跳过未受信的命令 hook**（按来源 + hook 定义哈希记录信任）。安装后打开 `codex`，运行 `/hooks`，对 AgentBeacon 的条目执行 review+trust。自动化场景可用 `--dangerously-bypass-hook-trust`，但正常使用请走 `/hooks`。切换安装方式（如脚本版 → 插件版）后需重新信任。
 
 ## 配置
 
