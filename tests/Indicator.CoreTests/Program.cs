@@ -95,7 +95,7 @@ public static class Program
             ("AnchoredCardLayout_SingleCard_NoOverlap",         AnchoredCardLayout_SingleCard_NoOverlap),
             ("AnchoredCardLayout_TwoCards_NoOverlap",           AnchoredCardLayout_TwoCards_NoOverlap),
             ("AnchoredCardLayout_UnequalHeights_NoOverlap",     AnchoredCardLayout_UnequalHeights_NoOverlap),
-            ("AnchoredCardLayout_NaturalTopsOverlap_AutoOffset",AnchoredCardLayout_NaturalTopsOverlap_AutoOffset),
+            ("AnchoredCardLayout_NaturalTopsOverlap_HidesOlder",AnchoredCardLayout_NaturalTopsOverlap_HidesOlder),
             ("AnchoredCardLayout_SafeTopSafeBottomClamp",       AnchoredCardLayout_SafeTopSafeBottomClamp),
             ("AnchoredCardLayout_NoRoom_HidesOlderNotNewer",    AnchoredCardLayout_NoRoom_HidesOlderNotNewer),
         };
@@ -1216,12 +1216,13 @@ public static class Program
             $"short must fit in safe band; bottom = {p["short"].Top + 80}");
     }
 
-    private static async Task AnchoredCardLayout_NaturalTopsOverlap_AutoOffset()
+    private static async Task AnchoredCardLayout_NaturalTopsOverlap_HidesOlder()
     {
-        // Two cards whose natural regions overlap. With the newer-wins
-        // policy we process from newest to oldest: the newer (lower)
-        // card stays at its natural top, the older (upper) card is
-        // pushed UP. They must not overlap.
+        // Two cards whose natural regions overlap. Round 12+ policy: a
+        // card must sit beside its OWN module — never displaced next to
+        // another lamp. So the overlapping OLDER card is hidden outright
+        // (newer keeps its natural seat); it returns when the newer card
+        // retracts and the layout is re-run.
         var p = AnchoredCardLayout.Compute(
             new[]
             {
@@ -1230,16 +1231,9 @@ public static class Program
             },
             safeTop: 100, safeBottom: 800, gap: 8);
 
-        Assert(p["upper"].Visible && p["lower"].Visible, "both visible");
-        // newer (lower) keeps natural top
+        Assert(p["lower"].Visible, "newer keeps its natural seat");
         Assert(p["lower"].Top == 310, $"newer keeps natural top 310; got {p["lower"].Top}");
-        // older (upper) is pushed up to clear the newer card + gap.
-        // maxTop for upper = 310 - 8 - 200 = 102 -> top clamped to 102.
-        Assert(p["upper"].Top == 102,
-            $"older pushed up to 102; got {p["upper"].Top}");
-        // Pairwise non-overlap: upper.bottom + gap <= lower.top.
-        Assert(p["upper"].Top + 200 + 8 <= p["lower"].Top,
-            $"upper bottom ({p["upper"].Top + 200}) + gap must be <= lower top ({p["lower"].Top})");
+        Assert(!p["upper"].Visible, "overlapping older card must be hidden");
     }
 
     private static async Task AnchoredCardLayout_SafeTopSafeBottomClamp()

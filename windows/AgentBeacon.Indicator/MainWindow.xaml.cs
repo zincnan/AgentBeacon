@@ -574,6 +574,9 @@ public partial class MainWindow : Window
         if (trackedSessionId is null) return;
         _cards.Remove(trackedSessionId);
         _cardShowOrdinal.Remove(trackedSessionId);
+        // A card just freed its seat (natural expiry, ✕, or
+        // overflow-hidden): give overflowed cards a chance to appear.
+        ReanchorAllCards();
     }
 
     /// <summary>
@@ -637,8 +640,14 @@ public partial class MainWindow : Window
             var card = kv.Value;
             if (!placement.Visible)
             {
-                // No room: retract.
-                ForceRetractCard(kv.Key, immediate: false);
+                // No room next to its own module without overlapping a
+                // neighbouring card: hide (retract) only if it is on
+                // screen; an already-hidden card just stays parked and
+                // will be shown by a later pass once room frees up.
+                if (card.IsVisible)
+                {
+                    ForceRetractCard(kv.Key, immediate: false);
+                }
                 continue;
             }
             AnchorCardOnModule(card, placement.Top, reshowSessionId == kv.Key);

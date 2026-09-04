@@ -269,7 +269,14 @@ public partial class CardWindow : Window
     /// </summary>
     public void SlideBackToRightOfModule()
     {
-        if (!IsVisible) return;
+        // Hidden cards (e.g. an overflow-hidden card whose stay timer
+        // expires) must still be cleaned up, otherwise they linger in the
+        // MainWindow registry forever.
+        if (!IsVisible)
+        {
+            FinishRetract();
+            return;
+        }
         if (_phase == CardPhase.Retracting) return;
 
         double retractLeft = RetractLeft;

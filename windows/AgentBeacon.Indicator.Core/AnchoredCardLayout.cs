@@ -23,7 +23,7 @@ public readonly struct AnchoredCardInput
 /// </summary>
 public readonly struct AnchoredCardPlacement
 {
-    /// <summary>True when the card fits inside the safe area and should be shown.</summary>
+    /// <summary>True when the card fits inside the safe area without overlapping another card, and should be shown.</summary>
     public bool Visible { get; init; }
 
     /// <summary>Final screen-Y of the card's top edge.</summary>
@@ -35,31 +35,22 @@ public readonly struct AnchoredCardPlacement
 /// to their owning LampModule.
 ///
 /// The product rule: each Card sits to the LEFT of its own Agent
-/// traffic-light module, vertically centered on the module, with a
-/// small gap between the card's right edge and the module's left edge.
-/// Multiple cards must NOT overlap each other.
+/// traffic-light module, vertically centered on the module. A card that
+/// cannot sit at its own module's side without overlapping another card
+/// is NOT shown displaced — it is hidden. A displaced card would visually
+/// attach to the WRONG lamp, which is worse than seeing fewer cards.
 ///
-/// Newer-wins policy: when there isn't enough vertical room for every
-/// card, the NEWER card (later in the input list = later in insertion
-/// order = more recently Show'd) stays at its preferred position, and
-/// OLDER cards are pushed UP to make room. If an older card would have
-/// to climb above <c>safeTop</c>, it is marked not visible.
+/// Newest-wins: inputs arrive oldest first; the newest card claims its
+/// natural seat first, and any OLDER card whose natural seat would
+/// overlap an already-placed card is hidden. A hidden card comes back on
+/// its next Show, or as soon as the newer card retracts and frees the
+/// space (the caller re-runs this layout on retract).
 ///
-/// Algorithm (MVP, deterministic):
-///
-///   1. Inputs come in insertion order: oldest first, newest last.
-///   2. We process the list from newest to oldest (reverse iteration).
-///      The newest card sits at its natural top first.
-///   3. For each subsequent (older) card:
-///        a. naturalTop = moduleCenter - height/2 (clamped to
-///           [safeTop, safeBottom - height]).
-///        b. maxTop = cursor - gap - height  (must clear the next-newer
-///           card already placed above us).
-///        c. top = min(naturalTop, maxTop) clamped to safe band.
-///        d. If top &lt; safeTop: HIDDEN.
-///        e. Else: VISIBLE at top. cursor = top.
-///
-/// No fifth state, no notification center history, no z-order tricks.
+/// Algorithm (per card, newest → oldest):
+///   1. natural = clamp(moduleCenter - height/2, safeTop, safeBottom - height).
+///   2. If [natural, natural+height) overlaps any placed card's band
+///      (expanded by gap on each side) → HIDDEN.
+///   3. Else VISIBLE at natural; record the band.
 /// </summary>
 public static class AnchoredCardLayout
 {
@@ -72,44 +63,32 @@ public static class AnchoredCardLayout
         var result = new Dictionary<string, AnchoredCardPlacement>(StringComparer.Ordinal);
         if (inputs.Count == 0) return result;
 
-        // cursor = top of the next-newer card already placed. Until
-        // we've placed any card, there's no constraint above us, so
-        // we leave cursor at a sentinel that disables the maxTop
-        // check.
-        bool anyPlaced = false;
-        double cursor = 0;
+        var placed = new List<(double Top, double Bottom)>();
 
-        for (int i = inputs.Count - 1; i >= 0; i--)
+        for (int i = inputs.Count - 1; i >= 0; i--) // newest → oldest
         {
             var inp = inputs[i];
 
             double natural = inp.ModuleCenterYScreen - inp.Height / 2.0;
-            // Pre-clamp natural into the safe band.
             if (natural < safeTop) natural = safeTop;
             if (natural + inp.Height > safeBottom) natural = safeBottom - inp.Height;
+            double bottom = natural + inp.Height;
 
-            double top = natural;
-            if (anyPlaced)
-            {
-                // Don't overlap the next-newer card above us.
-                double maxTop = cursor - gap - inp.Height;
-                if (top > maxTop) top = maxTop;
-            }
+            bool overlaps = placed.Any(band =>
+                natural < band.Bottom + gap && bottom > band.Top - gap);
 
-            if (top < safeTop)
+            if (overlaps)
             {
                 result[inp.SessionId] = new AnchoredCardPlacement
                 {
                     Visible = false,
-                    Top = natural, // reported for caller diagnostics
+                    Top = natural, // reported for diagnostics; card will be hidden
                 };
-                // A hidden card does not reserve space.
                 continue;
             }
 
-            result[inp.SessionId] = new AnchoredCardPlacement { Visible = true, Top = top };
-            cursor = top;
-            anyPlaced = true;
+            result[inp.SessionId] = new AnchoredCardPlacement { Visible = true, Top = natural };
+            placed.Add((natural, bottom));
         }
 
         return result;
