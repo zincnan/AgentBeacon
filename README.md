@@ -38,6 +38,16 @@ AgentBeacon 把这些全部变成**余光扫一眼**的事：每个 Agent 会话
 | 底部 🟢 绿 | `completed` | 本轮完成 | 弹出 30 秒后收回，绿灯保留 5 分钟 |
 | 顶部 🔴 红 | `failed` | 挂了，去看错误 | 弹出 30 秒后收回，**红灯长亮** |
 
+<table>
+  <tr>
+    <td><img src="images/running.png" width="170"></td>
+    <td><img src="images/approval.png" width="330"></td>
+  </tr>
+  <tr>
+    <td><img src="images/completed.png" width="330"></td>
+    <td><img src="images/failed.png" width="330"></td>
+  </tr>
+</table>
 状态变化时新亮的灯（黄/绿/红）会像真实红绿灯一样**闪烁数秒**提醒你；卡片从对应灯的左侧弹出、展示 agent / 状态 / 消息，停留 30 秒后自动收回——**卡片消失 ≠ 状态消失**，灯才是持久信号。多张卡片同时弹出时自动避让不重叠。
 
 日常小操作：**左键拖动**任意灯可挪动整个灯列；**右键 → 重命名此灯**可给同名会话起个能分清的名字（如"前端任务"/"修数据库"，Enter 确认，持久化保存）；**右键 → 关闭此灯**可清掉不再关心的会话（该会话一旦有新状态，灯会自动重建）。
@@ -48,7 +58,6 @@ AgentBeacon 把这些全部变成**余光扫一眼**的事：每个 Agent 会话
 | --- | --- |
 | Windows 桌面端（Receiver + Indicator） | Windows 10/11。**用发布包分发时接收方零依赖**（.NET 运行时已打进去）；从源码跑则需要 .NET 10 SDK |
 | Agent 端 | 任何能发 HTTP POST 的环境（WSL / Linux / macOS / Windows） |
-| `agent-notify`（通用上报脚本） | Python 3.8+，仅标准库，无第三方依赖（测试环境 3.12） |
 | Claude Code 插件 Adapter | Claude Code 2.1+（hooks / 插件机制，验证版本 2.1.250） |
 | 网络 | Agent 能访问 Receiver 的 `IP:端口`；WSL 与 Windows 共享本地网络时直接用 `127.0.0.1` |
 
@@ -147,7 +156,7 @@ python3 plugins/codex/install.py --remove
 }
 ```
 
-之后任何目录直接 `claude` / `codex`，红绿灯自动跟随所有会话。其它 Agent / 脚本用一个 HTTP POST（或 `notify/agent_notify.py`）即可接入，协议见 [docs/protocol.md](docs/protocol.md)。
+之后任何目录直接 `claude` / `codex`，红绿灯自动跟随所有会话。其它 Agent / 脚本用一个 HTTP POST 即可接入，协议见 [docs/protocol.md](docs/protocol.md)。
 
 ### 3. 验证
 
@@ -156,7 +165,7 @@ python3 plugins/codex/install.py --remove
 ## 它是怎么工作的（30 秒版）
 
 ```
-Agent（Claude Code 插件 / 任意脚本）
+Agent（Claude Code 插件 / Codex hooks / 任意脚本）
     │  HTTP POST /api/v1/status（单向、无重试、last-received-wins）
     ▼
 Receiver（Windows，C# / ASP.NET Core）     ←─ 状态的唯一权威，内存中维护
@@ -169,7 +178,7 @@ Indicator（Windows，WPF 红绿灯面板）
 
 ## 项目状态
 
-- **Round 1**：Protocol v1 + `agent-notify` + Receiver（HTTP、校验、last-received-wins）
+- **Round 1**：Protocol v1 + Receiver（HTTP、校验、last-received-wins）
 - **Round 2**：Windows Indicator MVP（WPF + Named Pipe IPC、无焦点、completed 墓碑）
 - **Round 3**：三灯红绿灯 UI 重构（模块化、卡片锚定、碰撞布局）
 - **Round 4**：Claude Code 插件 Adapter（hooks 映射、进程看门狗、两条 failed 上报路径）
@@ -182,18 +191,15 @@ Indicator（Windows，WPF 红绿灯面板）
 - **Round 11**：Codex CLI Adapter（`~/.codex/hooks.json` 接入，含信任引导、看门狗）
 - **Round 12**：灯右键重命名（就地编辑、按会话持久化、Tooltip 保留真实身份）
 
-自动化测试 **178 个 unique tests** 全部通过（Python 4 套 + C# 2 套；C# 套件在 Linux 与 Windows 原生 .NET 上各跑一遍同一组用例）：
+自动化测试 **170 个 unique tests** 全部通过（Python 3 套 + C# 2 套；C# 套件在 Linux 与 Windows 原生 .NET 上各跑一遍同一组用例）：
 
 | 套件 | 数量 |
 | --- | --- |
-| `tests/test_notify.py` | 8 |
 | `tests/test_receiver.py` | 42 |
 | `tests/test_hook_adapter.py` | 33 |
 | `tests/test_codex_adapter.py` | 19 |
 | `tests/Receiver.IpcTests` | 18 |
 | `tests/Indicator.CoreTests` | 58 |
-
-尚未实现（不在本期范围）：其它 Agent Runtime 的 Adapter（OpenCode 等）、SQLite 持久化、WebSocket/SSE、审批回传、设置界面。
 
 ## 文档
 

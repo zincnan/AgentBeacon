@@ -1,6 +1,6 @@
 # Claude Code Adapter（Round 4，插件形态）
 
-AgentBeacon 的第一个 in-tree Adapter。它是一个 **Claude Code 插件**（`plugins/claude-code/`）：通过 Claude Code 的 hooks 机制监听会话生命周期事件，翻译成四状态之一，POST 给 Receiver —— 与手写 `agent-notify` 调用完全同构，但安装一次后全自动。
+AgentBeacon 的第一个 in-tree Adapter。它是一个 **Claude Code 插件**（`plugins/claude-code/`）：通过 Claude Code 的 hooks 机制监听会话生命周期事件，翻译成四状态之一，POST 给 Receiver —— 传输语义：单次 POST、不重试、3s 超时，安装一次后全自动。
 
 ## 安装
 
@@ -84,7 +84,7 @@ plugins/claude-code/
 ├── hooks/hooks.json               # 8 个事件 → 同一个脚本
 └── scripts/
     ├── agentbeacon_hook.py        # 入口：stdin JSON → 状态 → POST（内联传输，
-    │                              #   语义同 agent-notify：单次 POST、不重试、
+    │                              #   单次 POST、不重试、
     │                              #   3s 超时、永远 exit 0 不阻塞 Claude）
     └── agentbeacon_watchdog.py    # 每会话看门狗（failed 路径 2）
 ```

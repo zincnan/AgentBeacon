@@ -121,16 +121,28 @@ public partial class LampModuleView : UserControl
 
     /// <summary>
     /// Enter in-place rename mode: swap the label TextBlock for an edit
-    /// box pre-filled with the current text, selected, keyboard-focused
-    /// (Focusable stays false on the WINDOW; the TextBox itself is
-    /// focusable and does not activate the window).
+    /// box pre-filled with the current text, selected, keyboard-focused.
+    ///
+    /// Keyboard focus REQUIRES the host window to be activatable: our
+    /// window runs with WS_EX_NOACTIVATE so it never steals focus — which
+    /// also means keystrokes keep going to the real foreground app (typed
+    /// characters would land in VS Code's terminal). Renaming is an
+    /// explicit user interaction, so we temporarily allow activation,
+    /// focus the edit box, and restore no-activate when editing ends.
     /// </summary>
     public void BeginRename()
     {
+        if (Window.GetWindow(this) is Window host)
+        {
+            host.Activate();
+            host.Focusable = true; // Window-level Focusable=False blocks the focus chain
+            NoActivateHelper.SetNoActivate(host, enabled: false);
+        }
         LabelEdit.Text = AgentLabel.Text;
         AgentLabel.Visibility = Visibility.Collapsed;
         LabelEdit.Visibility = Visibility.Visible;
         LabelEdit.Focus();
+        System.Windows.Input.Keyboard.Focus(LabelEdit);
         LabelEdit.SelectAll();
     }
 
@@ -139,6 +151,12 @@ public partial class LampModuleView : UserControl
         if (LabelEdit.Visibility != Visibility.Visible) return;
         LabelEdit.Visibility = Visibility.Collapsed;
         AgentLabel.Visibility = Visibility.Visible;
+        // Restore the no-activate / non-focusable host as soon as editing ends.
+        if (Window.GetWindow(this) is Window host)
+        {
+            NoActivateHelper.EnsureNoActivate(host);
+            host.Focusable = false;
+        }
         if (commit)
         {
             var label = LabelEdit.Text.Trim();

@@ -89,8 +89,7 @@ claude --plugin-dir plugins/claude-code
 
 ```text
 WSL Agent
-  → Adapter / Hook
-  → agent-notify
+  → Adapter / Hook (内置传输)
   → HTTP
   → Windows Receiver
   → Named Pipe

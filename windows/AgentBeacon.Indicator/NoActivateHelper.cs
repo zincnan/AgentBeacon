@@ -39,6 +39,28 @@ internal static class NoActivateHelper
         ApplyStyle(hwnd);
     }
 
+    /// <summary>
+    /// Toggle WS_EX_NOACTIVATE on an existing window. Used by the lamp
+    /// rename flow: keyboard input goes to whichever window owns Win32
+    /// focus, and a NOACTIVATE window never becomes that owner — so while
+    /// the rename edit box is open we temporarily ALLOW activation (the
+    /// user explicitly asked for an interaction) and restore the style
+    /// afterwards.
+    /// </summary>
+    public static void SetNoActivate(Window window, bool enabled)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        var current = GetWindowLong(hwnd, GWL_EXSTYLE);
+        var desired = enabled
+            ? current | WS_EX_NOACTIVATE | WS_EX_TOPMOST
+            : current & ~WS_EX_NOACTIVATE;
+        if (desired != current)
+        {
+            SetWindowLong(hwnd, GWL_EXSTYLE, desired);
+        }
+    }
+
     private static void ApplyStyle(IntPtr hwnd)
     {
         if (hwnd == IntPtr.Zero) return;

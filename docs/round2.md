@@ -28,7 +28,7 @@ Three processes in total, started independently:
                                 | (length-prefixed JSON SnapshotEnvelope)
                                 v
 +---------------------+    POST /api/v1/status   +---------------------+
-| agent-notify.py     | ----------------------> | agentbeacon-receiver |
+| adapter / hook      | ----------------------> | agentbeacon-receiver |
 | (WSL/Linux, Python) |                         | (Kestrel, net10.0)  |
 +---------------------+                         +---------------------+
 ```
@@ -48,7 +48,7 @@ Per the kickoff scope:
 
 * Claude Code Adapter. The Adapter is the per-runtime layer that listens
   to the Agent Runtime's lifecycle events and translates them into the
-  four statuses before invoking `agent-notify`. `agent-notify` itself is
+  four statuses before POSTing them. The hook script itself is
   NOT an Adapter — it's a generic status-reporting CLI that only knows
   how to POST a `(session_id, agent, status, message?, host?)` envelope
   to the Receiver. Each Agent Runtime (Claude Code, OpenCode, Codex,
@@ -56,7 +56,7 @@ Per the kickoff scope:
   first one (Claude Code) — Round 3 was used for the Indicator
   traffic-light UI redesign.
 * Windows Service / installer / auto-start.
-* Any change to Protocol v1 or `agent-notify.py`.
+* Any change to Protocol v1.
 * Cross-platform Indicator (macOS / Linux). v1 Indicator is Windows-only.
 
 ## Receiver → Indicator IPC
@@ -254,7 +254,6 @@ area (just above the taskbar). It has no taskbar entry, stays on top, and
 
 ```bash
 # Python (Agent-side + Receiver HTTP behavior)
-conda run -n py312 python tests/test_notify.py      # 7 unique tests
 conda run -n py312 python tests/test_receiver.py    # 38 unique tests
 
 # C# Receiver IPC tests (spawns the real receiver as a subprocess)

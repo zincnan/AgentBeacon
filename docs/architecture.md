@@ -12,8 +12,7 @@
 │       ↓                 │
 │  Hook (立即翻译为 4 状态) │
 │       ↓                 │
-│  agent-notify (搬运)    │
-│   - Python stdlib       │
+│  Adapter (内置传输)     │
 │   - env var 配置        │
 └────────────┬────────────┘
              │ HTTP POST /api/v1/status
@@ -39,11 +38,11 @@
 
 两侧只通过 `docs/protocol.md` 定义的 v1 HTTP 协议通信：
 
-- `agent-notify` 不依赖任何 Windows UI 实现。
+- Adapter / hook 不依赖任何 Windows UI 实现。
 - Receiver 不依赖任何特定 Agent Runtime。
 - Named Pipe IPC **不属于 HTTP Protocol v1**，是 Windows 本机内部的实现细节，未来若有 macOS / Linux Indicator 再重新设计。
 
-两侧可以用不同语言实现，**不强制共享运行时**。当前 `agent-notify` 是 Python，`Receiver` 是 C# / ASP.NET Core，`Indicator` 是 C# / WPF。隔离让 Agent 侧可以在 Linux/WSL 上单独演进，Windows 侧可以独立实现 UI。
+两侧可以用不同语言实现，**不强制共享运行时**。当前 Adapter / hook 是 Python，`Receiver` 是 C# / ASP.NET Core，`Indicator` 是 C# / WPF。隔离让 Agent 侧可以在 Linux/WSL 上单独演进，Windows 侧可以独立实现 UI。
 
 ---
 
@@ -67,7 +66,7 @@ Hook 是 Agent Runtime 的状态事件源，挂在 Agent Runtime 提供的生命
 Hook 的职责：
 
 - 监听 Agent Runtime 的生命周期事件
-- **事件出现后立即**将其翻译为 `running` / `approval` / `completed` / `failed` 之一，并调用 `agent-notify`
+- **事件出现后立即**将其翻译为 `running` / `approval` / `completed` / `failed` 之一，并直接 POST 给 Receiver（内置传输；单次、不重试）
 - 负责生成并保持同一个 Session 生命周期内 `session_id` 不变
 
 Hook 必须做到：
@@ -83,33 +82,16 @@ Hook 不应该：
 - 自行选择目标主机（由配置层处理）
 - 缓存历史状态（接收端负责）
 
-### 2.3 agent-notify
+### 2.3 Adapter 内置传输
 
-`agent-notify` 是一个 Python 单文件脚本（stdlib only），与具体 Agent 解耦。它的唯一职责是把状态事件通过 HTTP 转发给 Windows 端的 Receiver。
+两个 in-tree Adapter（Claude Code 插件、Codex hooks）都把传输逻辑内联在 hook 脚本里：读 stdin 的 hook JSON，翻译状态后直接 `POST /api/v1/status`。约定语义一致：
 
-约束：
+- **不识别除自身外的 Agent 类型**，不推断状态。
+- **单次 POST、不重试**——迟到的旧事件覆盖新状态会破坏 last-received-wins。
+- 2xx 视为送达；4xx 视为请求非法；5xx/网络错误交给调用方。
+- `message` 超 512 字符本地截断；未知 status 直接抛错。
 
-- **不识别 Agent 类型**。不关心当前上报来自 Claude Code 还是 Codex。
-- **不推断状态**。收到的 `status` 字段是什么就发什么。
-- **不持有会话状态**。每次调用都是一次独立的 HTTP 请求。
-- **v1 不做重试**。如果网络抖动导致请求失败，notify 直接把失败交给调用方（Hook / 手工测试脚本）。这是有意的设计：异步重试可能让迟到的旧事件覆盖已经到达的新状态，违反 last-received-wins 语义。可靠投递与 sequence 留待后续版本。
-- **响应为 2xx 视为送达成功**；响应为 4xx 视为请求本身非法；响应为 5xx 或网络错误视为暂时性失败，由调用方决定后续处理（v1 即直接失败）。
-
-#### 2.3.1 配置
-
-| 配置项 | 优先级 | 说明 |
-| --- | --- | --- |
-| `AGENTBEACON_URL` | env var | Receiver 地址，例如 `http://127.0.0.1:8765` |
-| `AGENTBEACON_TOKEN` | env var | 共享 Bearer Token |
-| `--url` | CLI flag | 覆盖 `AGENTBEACON_URL` |
-| `--token` | CLI flag | 覆盖 `AGENTBEACON_TOKEN`。**仅用于开发调试**：命令行 secret 会进入 shell history 与 `ps` / `/proc/<pid>/cmdline`，正常部署不应使用。 |
-
-#### 2.3.2 字段防御性处理
-
-- 必选字段本地校验：缺失或为空 → 直接退出非零，不发请求。
-- `status` 在本地校验是否在四个合法值内；非法 → 直接退出非零。
-- `message` 超 512 字符 → 本地截断到 512 字符，再发。
-- `session_id` 超 256 字符 → 本地直接退出非零（身份字段不允许截断）。
+仓库历史上曾提供独立的 `agent-notify` 通用脚本（R1）；随着两个 Adapter 内置了完全相同的传输语义，该脚本已移除——任何语言用任意 HTTP 客户端 POST 一次即可接入，见 `docs/protocol.md`。
 
 ---
 
@@ -180,8 +162,7 @@ Indicator 是 C# / WPF，目标框架为 `net10.0-windows`，**只能在 Windows
 
 1. Agent Runtime 出现生命周期事件。
 2. Hook **立即**将其翻译为 `running` / `approval` / `completed` / `failed` 之一。
-3. Hook 调用 `agent-notify`，传入 `session_id`、`agent`、`status`、可选 `message` 与 `host`。
-4. `agent-notify` 通过 HTTP `POST /api/v1/status` 把这条事件发送给 Windows Receiver，附上 Bearer Token。**仅一次请求，不重试**。
+3. Adapter / Hook 通过 HTTP `POST /api/v1/status` 把翻译好的事件（`session_id`、`agent`、`status`、可选 `message` 与 `host`）发送给 Windows Receiver，附上 Bearer Token。**仅一次请求，不重试**。
 5. Receiver 校验 Token → 校验请求体 → 校验字段 → 更新内存中该 `session_id` 的最新状态（last received wins）。
 6. Receiver 立即把当前完整 snapshot 推送给所有已连接的 Indicator 客户端（per-client bounded Channel + DropOldest）。
 7. Indicator 接收 snapshot，应用 UI 规则（颜色、卡片、滑入动画）。

@@ -290,7 +290,7 @@ Content-Type: application/json
 
 ### 9.6 message 超长
 
-发送方携带一段超过 512 字符的 `message`，例如 800 字符。`agent-notify` 会在本地先截到 512，HTTP body 内仍是 512 字符；即使发送方未截，Receiver 也会再次截到 512。**状态事件正常写入，返回 200 OK**。
+发送方携带一段超过 512 字符的 `message`，例如 800 字符。内置 Adapter 会在本地先截到 512，HTTP body 内仍是 512 字符；即使发送方未截，Receiver 也会再次截到 512。**状态事件正常写入，返回 200 OK**。
 
 ---
 
