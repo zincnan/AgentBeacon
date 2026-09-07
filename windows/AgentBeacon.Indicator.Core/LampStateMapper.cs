@@ -93,7 +93,7 @@ public static class LampStateMapper
         /// <summary>Approval: 30 seconds (auto-retract; yellow lamp stays).</summary>
         public static readonly CardStayPolicy Approval = new() { StayMs = 30_000 };
 
-        /// <summary>Completed: 30 seconds (auto-retract; green lamp stays 5 min).</summary>
+        /// <summary>Completed: 30 seconds (auto-retract; green lamp stays visible).</summary>
         public static readonly CardStayPolicy Completed = new() { StayMs = 30_000 };
 
         /// <summary>Failed: 30 seconds (auto-retract; red lamp stays long-lived).</summary>

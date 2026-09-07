@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Windows;
 using AgentBeacon.Indicator.Core;
@@ -90,8 +92,9 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Tray icon: a small blue dot with "AgentBeacon / 退出" context menu.
-    /// 左键单击无动作（灯就是全部 UI）；右键退出是唯一菜单项。
+    /// Tray icon: a small blue dot with "AgentBeacon" context menu.
+    /// 左键单击无动作（灯就是全部 UI）；右键菜单区分只退出
+    /// Indicator 和停止本安装目录下的 Receiver 后退出。
     /// </summary>
     private void InitTrayIcon()
     {
@@ -107,7 +110,8 @@ public partial class App : Application
         _trayIconHandle = System.Drawing.Icon.FromHandle(_trayBitmap.GetHicon());
 
         var menu = new WinForms::ContextMenuStrip();
-        menu.Items.Add("退出 AgentBeacon", null, (_, _) => ExitFromTray());
+        menu.Items.Add("退出指示器", null, (_, _) => ExitFromTray(stopReceiver: false));
+        menu.Items.Add("停止 Receiver 并退出", null, (_, _) => ExitFromTray(stopReceiver: true));
 
         _trayIcon = new WinForms::NotifyIcon
         {
@@ -119,11 +123,15 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Supported shutdown path: tray → 退出. Tears down the pipe host,
-    /// hides/closes windows, removes the tray icon, then exits the app.
+    /// Supported shutdown path from the tray menu. Tears down the pipe
+    /// host, hides/closes windows, removes the tray icon, then exits.
     /// </summary>
-    private void ExitFromTray()
+    private void ExitFromTray(bool stopReceiver)
     {
+        if (stopReceiver)
+        {
+            StopOwnedReceiver();
+        }
         _host?.Dispose();
         _host = null;
         if (_trayIcon is not null)
@@ -134,6 +142,127 @@ public partial class App : Application
         }
         _mainWindow?.Close();
         Shutdown();
+    }
+
+    private static void StopOwnedReceiver()
+    {
+        var expectedPaths = ExpectedReceiverPaths().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var stopped = TryStopReceiverFromPidFile(expectedPaths);
+        if (stopped) return;
+
+        foreach (var proc in Process.GetProcessesByName("agentbeacon-receiver"))
+        {
+            using (proc)
+            {
+                if (!IsExpectedReceiver(proc, expectedPaths)) continue;
+                TryStopProcess(proc);
+                return;
+            }
+        }
+    }
+
+    private static bool TryStopReceiverFromPidFile(IReadOnlySet<string> expectedPaths)
+    {
+        foreach (var pidFile in ReceiverPidFiles())
+        {
+            try
+            {
+                if (!File.Exists(pidFile)) continue;
+                var text = File.ReadAllText(pidFile).Trim();
+                if (!int.TryParse(text, out var pid))
+                {
+                    TryDelete(pidFile);
+                    continue;
+                }
+
+                using var proc = Process.GetProcessById(pid);
+                if (!IsExpectedReceiver(proc, expectedPaths)) continue;
+                TryStopProcess(proc);
+                TryDelete(pidFile);
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                TryDelete(pidFile);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AgentBeacon] stop receiver failed: {ex}");
+            }
+        }
+        return false;
+    }
+
+    private static bool IsExpectedReceiver(Process proc, IReadOnlySet<string> expectedPaths)
+    {
+        try
+        {
+            if (!string.Equals(proc.ProcessName, "agentbeacon-receiver", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            var path = proc.MainModule?.FileName;
+            return path is not null && expectedPaths.Contains(NormalizePath(path));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[AgentBeacon] receiver process validation failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void TryStopProcess(Process proc)
+    {
+        try
+        {
+            if (proc.HasExited) return;
+            proc.Kill(entireProcessTree: true);
+            proc.WaitForExit(3000);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[AgentBeacon] receiver stop failed: {ex}");
+        }
+    }
+
+    private static IEnumerable<string> ExpectedReceiverPaths()
+    {
+        var roots = new[]
+        {
+            Directory.GetCurrentDirectory(),
+            AppContext.BaseDirectory,
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..")),
+        };
+
+        var relativePaths = new[]
+        {
+            @"receiver\agentbeacon-receiver.exe",
+            @"receiver\bin\Release\net10.0\agentbeacon-receiver.exe",
+            @"receiver\bin\Debug\net10.0\agentbeacon-receiver.exe",
+        };
+
+        foreach (var root in roots)
+        {
+            foreach (var rel in relativePaths)
+            {
+                yield return NormalizePath(Path.Combine(root, rel));
+            }
+        }
+    }
+
+    private static IEnumerable<string> ReceiverPidFiles()
+    {
+        yield return Path.Combine(Directory.GetCurrentDirectory(), "receiver.pid");
+        yield return Path.Combine(AppContext.BaseDirectory, "receiver.pid");
+        yield return Path.Combine(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..")), "receiver.pid");
+    }
+
+    private static string NormalizePath(string path)
+        => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); } catch { }
     }
 
     private static string? ParsePipeArg(string[] args)

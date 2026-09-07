@@ -17,6 +17,10 @@
     成功后：屏幕右上角出现状态灯（无会话时完全隐藏，属正常），
     且开机自动启动，无需再管。
 
+    托盘右键：
+        退出指示器             只退出 agentbeacon-indicator.exe
+        停止 Receiver 并退出    停止本文件夹对应的 Receiver 后退出指示器
+
 二、改配置
 
     编辑本文件夹的 agentbeacon.json（就三个字段）：

@@ -25,7 +25,7 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 
 - 一个模块对应一个 `session_id`，不是对应一个 Agent 类型；同一 agent 的多个并发 session 会出现多个同名模块。
 - v1 严格只有上述四种亮起颜色，**不引入灰色（offline / idle / unknown / paused / connecting）第五状态**。
-- `completed` 的模块保留 5 分钟后自动移除（见 §3）。
+- `completed` 的模块持续保留，直到 Receiver 不再上报该 session、状态被新事件替换，或用户右键关闭。
 - 状态映射的 canonical 实现在 `Indicator.Core` 的 `LampStateMapper.ForStatus`，未知 status 直接抛异常（fail-fast）。
 - 模块 hover 显示 Tooltip：`agent · session_id · host`（host 可选）。Tooltip 是 `agent` 与 `host` 的函数；任一字段在后续快照中被替换，Tooltip 都随之刷新（whole-event replacement）。
 
@@ -35,7 +35,7 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 | ----------- | --------------------------------------------------------------------- |
 | `running`   | **不弹卡片**。只更新对应模块的灯位/颜色。                               |
 | `approval`  | **弹出卡片**，停留 **30 秒** 后自动收回；**黄色灯保持**直到状态变化。    |
-| `completed` | **弹出卡片**，展示最近一次的 `message`（如有）。卡片停留 **30 秒** 后自动收回。模块继续保留（5 分钟）。 |
+| `completed` | **弹出卡片**，展示最近一次的 `message`（如有）。卡片停留 **30 秒** 后自动收回。模块继续保留。 |
 | `failed`    | **弹出卡片**，展示 `message`（如有）。卡片停留 **30 秒** 后自动收回。红色灯长期保留。 |
 
 时长（30 秒）是 **UI 常量**，不属于 HTTP Protocol v1，可独立调整。
@@ -51,12 +51,12 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 - 卡片右上角有 ✕ 按钮，点击可**提前收回**（走与自然到期相同的收回动画并清理计时器）；卡片文案为中文（运行中 / 等待授权 / 已完成 / 失败）。
 - 卡片与模块均使用 `ShowActivated=False` + `WS_EX_NOACTIVATE`，**不抢占前台焦点**。
 
-## 3. completed 状态灯的自动清理
+## 3. completed 状态灯的保留
 
-- `completed` 状态的 Session 在状态灯列表中保留 **5 分钟**（按 `updated_at` 计算），之后从列表中移除。
-- 5 分钟内如果该 Session 又上报了新的状态（例如再次进入 `running`），`updated_at` 前进，计时器按新时间计算。
-- 5 分钟后 Session 从状态灯列表中消失。Receiver 内部状态表中的条目可以保留更长（v1 仅要求内存中存在即可，是否清理、何时清理交由 Indicator 与 Receiver 协同）。
-- “5 分钟”是 v1 默认值，后续可做成 Indicator 侧的可配置项。
+- `completed` 状态的 Session 在状态灯列表中持续保留，显示为底部绿灯。
+- Indicator 不根据时间把 `completed` 灯自动移除；`Tick()` 不执行 completed aging。
+- 如果 Receiver 的 authoritative snapshot 不再包含该 session，Indicator 会移除对应模块并收回卡片。
+- 用户可以通过右键「关闭此灯」主动隐藏；同 session 后续产生严格更新的 `updated_at` 时会自动恢复。
 
 ## 4. failed 状态灯与卡片的分离
 
@@ -75,13 +75,13 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 - 同一 Session 收到**更新**的 `updated_at` 时，按新事件重新触发 `Show`：approval/completed/failed 均重置 30 秒停留。
 - 这是 UI 层的去重，不是协议层的语义。协议层不保证 `updated_at` 单调，只保证 last-received-wins。
 
-### 5.1 completed 灯的“墓碑”抑制（Round 2 收尾）
+### 5.1 completed 灯不做时间墓碑
 
-completed 灯在 §3 中按 5 分钟老化，老化后在 `_hiddenCompleted` 表里留下一条 `(session_id, updated_at)` 墓碑。在此之后：
+completed 灯不再按时间老化，因此没有 completed aging 水位：
 
-- **同一 `(session_id, updated_at)` 的 completed 重发**：灯不复活，卡片不重弹。测试 `Store_Completed_Hidden_SameSnapshotDoesNotReappear` 覆盖。
-- **同一 session 的 newer completed（updated_at 严格更大）**：清除墓碑，按新的 completed 处理（重新显示灯、重新弹 30s 卡片）。测试 `Store_Completed_Hidden_NewerCompletedReappears` 覆盖。
-- **同一 session 的非 completed 事件**（running / approval / failed）：清除墓碑，按新状态正常显示。测试 `Store_Completed_Hidden_RunningReappears` 覆盖。
+- **同一 `(session_id, updated_at)` 的 completed 重发**：灯继续保留，卡片不重弹。
+- **同一 session 的 newer completed（updated_at 严格更大）**：更新现有绿灯，并重新弹 30s 卡片。
+- **同一 session 的非 completed 事件**（running / approval / failed）：按新状态正常更新同一模块。
 
 不允许用灰色 / idle / unknown 等第五种状态表达“隐藏”——隐藏只是“当前没有灯要画”的状态，不是 UI 状态。
 
@@ -111,7 +111,7 @@ Indicator 的 Core 层作为防御性约束再次校验：构造 `SessionViewMod
 - timer 回调里要自检“我是不是该 session 仍然登记的 timer”，防止被替换的旧 callback 误杀新卡片。
 - 卡片收回动画（~200 ms）完成时通过 `RetractCompleted` 事件通知 MainWindow 清理登记；清理时做 instance-safe 检查，防止被替换的旧卡片迟到事件误删新卡片。
 
-WPF DispatcherTimer / 动画本身不做单元测试；上述语义在 Core 层有等价的 dedup / stay-policy / tombstone 行为覆盖测试。
+WPF DispatcherTimer / 动画本身不做单元测试；上述语义在 Core 层有等价的 dedup / stay-policy / dismissal 行为覆盖测试。
 
 ## 9. 灯的右键操作与拖拽（Round 5 / Round 12）
 
@@ -120,7 +120,7 @@ WPF DispatcherTimer / 动画本身不做单元测试；上述语义在 Core 层�
 **右键关闭（dismiss）**：右键任意灯模块 →「关闭此灯」。该模块被**完全拆除**（不保留隐藏窗口，省资源），同时收回其卡片、取消 timer。
 
 - 关闭时记录一条水位：`(session_id, 被隐藏事件的 updated_at)`（`LampDismissal.ShouldShow` 为 canonical 规则）。
-- 之后收到**同一 `(session_id, updated_at)`** 的重发（如别的会话触发 full snapshot 重播）：灯**不复活** —— 与 completed 墓碑同一防复活原则。
+- 之后收到**同一 `(session_id, updated_at)`** 的重发（如别的会话触发 full snapshot 重播）：灯**不复活**。
 - 收到**严格更新**的 `updated_at`（会话又活了、有新信号）：灯**重建**，按新状态正常显示；若新状态带卡片，卡片正常弹出（快照先于卡片事件送达，锚点模块已就位）。
 - 红灯被关闭后，该 session 用 `-c` 继续产生新事件 → 灯重建为新状态（红→蓝/绿…）。
 

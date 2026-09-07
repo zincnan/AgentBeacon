@@ -148,8 +148,8 @@ windows/
     IndicatorStatus.cs               (in SessionViewModel.cs) four valid statuses + Validate
     SessionViewModel.cs              INotifyPropertyChanged per session; LampColor + TooltipText
                                      Agent/Host settable; TooltipText re-fires on either change
-    SessionViewModelStore.cs         Pure state machine; lamp + card rules; completed-lamp
-                                     suppression tombstone; fail-fast on unknown status
+    SessionViewModelStore.cs         Pure state machine; lamp + card rules; completed lamps
+                                     retained until Receiver removal/local dismiss; fail-fast on unknown status
     CardEvent.cs                     Show / Update / Hide events
     PipeClient.cs                    Connects + reads frames, auto-reconnect with backoff
     IndicatorHost.cs                 Wires PipeClient → Store, surfaces events
@@ -177,35 +177,30 @@ See `docs/ui-policy.md` for the canonical rules. The Indicator's
 | Status        | Lamp                       | Card                                                |
 | ------------- | -------------------------- | --------------------------------------------------- |
 | `running`     | blue `#2F81F7`, present    | none                                                |
-| `approval`    | yellow `#D29922`, present  | persistent, until status changes                    |
-| `completed`   | green `#3FB950`, present   | shows 5 s then hides; lamp hidden 5 min after `updated_at` |
-| `failed`      | red `#F85149`, **long-lived** | shows 10 s then hides; lamp stays until status changes |
+| `approval`    | yellow `#D29922`, present  | shows then auto-retracts; lamp stays until status changes |
+| `completed`   | green `#3FB950`, present   | shows then auto-retracts; lamp stays until Receiver removal or local dismiss |
+| `failed`      | red `#F85149`, **long-lived** | shows then auto-retracts; lamp stays until status changes |
 
 Strictly **four** statuses, **four** colors. No gray / idle / offline /
 unknown / paused is ever rendered. Unknown statuses thrown fail-fast at the
 Core layer (`IndicatorStatus.Validate`).
 
-`approval` cards re-emit `Update` events when `updated_at` advances — the
-card content refreshes in place without flicker, and because approval cards
-have no auto-hide timer, the timer slot for that session stays empty.
+`approval` cards re-show when `updated_at` advances, refreshing content and
+re-arming the per-session auto-hide timer.
 
 `failed` cards are **not** updated in place when `updated_at` advances.
 Instead, the store emits a fresh `Show` event for the same session: the
-visible failed card is replaced and the per-session 10 s auto-hide timer
+visible failed card is replaced and the per-session auto-hide timer
 is cancelled and re-armed from zero. This is what the user sees as
-"another failure toast". It is deliberately different from `approval`
-because failed cards auto-hide and the user expects each fresh failure
-to claim its own full 10-second window.
+"another failure toast".
 
-Card durations (5 s completed, 10 s failed) and slide-in animation (220 ms)
+Card durations and slide-in animation (220 ms)
 are **UI constants** in `IndicatorUiConstants`. They are not part of HTTP
 Protocol v1.
 
-The completed-lamp 5-minute cleanup additionally records a hidden-completed
-tombstone so that subsequent re-broadcasts of the *same* `(session_id,
-updated_at)` completed event (which can happen when an unrelated session's
-POST forces the Receiver to re-send the full snapshot) do not reanimate
-the lamp or re-fire the card.
+Completed lamps are no longer aged out by time. They remain visible until
+Receiver stops reporting the session, a newer status replaces them, or the
+user dismisses the lamp locally.
 
 ## Build & run (manual verification)
 
@@ -263,7 +258,7 @@ conda run -n py312 python tests/test_receiver.py    # 38 unique tests
 dotnet run --project tests/Receiver.IpcTests -c Release   # 15 unique tests
 
 # C# Indicator Core tests (SessionViewModelStore + dedup rules + fail-fast
-# + completed-lamp suppression tombstone + Agent/Host replacement +
+# + completed-lamp retention + Agent/Host replacement +
 # PipeClient partial-read / payload-EOF semantics)
 dotnet run --project tests/Indicator.CoreTests -c Release  # 31 unique tests
 ```

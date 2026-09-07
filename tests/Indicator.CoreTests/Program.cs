@@ -21,8 +21,8 @@ public static class Program
             ("Store_Failed_DedupSameUpdatedAt",                     Store_Failed_DedupSameUpdatedAt),
             ("Store_Completed_DedupSameUpdatedAt",                  Store_Completed_DedupSameUpdatedAt),
             ("Store_Completed_NewerUpdatedAt_Reappears",            Store_Completed_NewerUpdatedAt_Reappears),
-            ("Store_Completed_HiddenAfter5MinFromUpdated",          Store_Completed_HiddenAfter5MinFromUpdated),
-            ("Store_Failed_HiddenAfter5Min_StillPresent",          Store_Failed_HiddenAfter5Min_StillPresent),
+            ("Store_Completed_StillPresentAfterLongIdle",           Store_Completed_StillPresentAfterLongIdle),
+            ("Store_Failed_StillPresentAfterLongIdle",             Store_Failed_StillPresentAfterLongIdle),
             ("Store_RunningToRunning_NewerUpdated_NoRedup",         Store_RunningToRunning_NewerUpdated_NoRedup),
             ("Store_ApprovalToApproval_NewerUpdated_ReShows",       Store_ApprovalToApproval_NewerUpdated_ReShows),
             ("Store_MultiSession_StableOrder",                      Store_MultiSession_StableOrder),
@@ -33,10 +33,10 @@ public static class Program
             ("Vm_PropertyChanged_OnStatus",                         Vm_PropertyChanged_OnStatus),
             ("Vm_TooltipText_Format",                               Vm_TooltipText_Format),
 
-            // Round 2 close-out — completed suppression tombstone
-            ("Store_Completed_Hidden_SameSnapshotDoesNotReappear",  Store_Completed_Hidden_SameSnapshotDoesNotReappear),
-            ("Store_Completed_Hidden_NewerCompletedReappears",      Store_Completed_Hidden_NewerCompletedReappears),
-            ("Store_Completed_Hidden_RunningReappears",             Store_Completed_Hidden_RunningReappears),
+            // Round 2 close-out — completed lamp retention
+            ("Store_Completed_SameSnapshotStaysVisibleNoRedup",    Store_Completed_SameSnapshotStaysVisibleNoRedup),
+            ("Store_Completed_NewerCompletedStaysVisibleAndReShows", Store_Completed_NewerCompletedStaysVisibleAndReShows),
+            ("Store_Completed_RunningTransitionStaysVisible",       Store_Completed_RunningTransitionStaysVisible),
 
             // Round 2 close-out — full-snapshot Agent / Host replacement
             ("Store_SameSessionId_AgentReplaced",                   Store_SameSessionId_AgentReplaced),
@@ -54,14 +54,12 @@ public static class Program
             ("Store_AuthoritativeRemoval_ApprovalEmitsHide",        Store_AuthoritativeRemoval_ApprovalEmitsHide),
             ("Store_AuthoritativeRemoval_ReappearsAsFresh",        Store_AuthoritativeRemoval_ReappearsAsFresh),
 
-            // Round 2 final close-out — aged-completed tombstone is NOT
-            // cleared by an authoritative empty snapshot (must survive
-            // reconnect / full-snapshot re-broadcast to prevent zombie
-            // completed lamps from reanimating).
-            ("Store_AuthoritativeEmpty_DoesNotClearAgedCompletedTombstone",
-                                                              Store_AuthoritativeEmpty_DoesNotClearAgedCompletedTombstone),
-            ("Store_AuthoritativeEmpty_NewerCompletedOrRunning_ClearsTombstone",
-                                                              Store_AuthoritativeEmpty_NewerCompletedOrRunning_ClearsTombstone),
+            // Round 2 final close-out — completed lamps are retained
+            // until Receiver removal or explicit local dismiss.
+            ("Store_AuthoritativeEmpty_RemovesCompletedAsReceiverRemoval",
+                                                              Store_AuthoritativeEmpty_RemovesCompletedAsReceiverRemoval),
+            ("Store_TwoCompletedSessions_RemainAfterLongIdle",
+                                                              Store_TwoCompletedSessions_RemainAfterLongIdle),
 
             // Round 2 final close-out — card stack layout (pure helper)
             // REMOVED in Round 3: cards now anchor to their Agent
@@ -313,7 +311,7 @@ public static class Program
         Assert(sink.Events[1].Kind == "Show", "second show (newer updated_at)");
     }
 
-    private static async Task Store_Completed_HiddenAfter5MinFromUpdated()
+    private static async Task Store_Completed_StillPresentAfterLongIdle()
     {
         await Task.CompletedTask; // sync test
         var store = new SessionViewModelStore();
@@ -322,18 +320,21 @@ public static class Program
 
         var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
         store.ApplySnapshot(new[] { Snap("s1", "completed", t0) }, t0);
-        // Before 5 min: lamp still there.
         store.Tick(t0.AddMinutes(2));
-        Assert(store.Sessions.Count == 1, $"lamp at 2min, count={store.Sessions.Count}");
-        // At exactly 5 min: removed.
+        Assert(store.Sessions.Count == 1, $"completed lamp at 2min, count={store.Sessions.Count}");
         store.Tick(t0.AddMinutes(5));
-        Assert(store.Sessions.Count == 0, $"lamp after 5min, count={store.Sessions.Count}");
+        Assert(store.Sessions.Count == 1, $"completed lamp at 5min, count={store.Sessions.Count}");
+        store.Tick(t0.AddHours(2));
+        Assert(store.Sessions.Count == 1, $"completed lamp after long idle, count={store.Sessions.Count}");
+        Assert(store.Sessions[0].SessionId == "s1", "completed session still there");
+        Assert(store.Sessions[0].Status == "completed", "completed status preserved");
     }
 
-    private static async Task Store_Failed_HiddenAfter5Min_StillPresent()
+    private static async Task Store_Failed_StillPresentAfterLongIdle()
     {
         await Task.CompletedTask; // sync test
-        // The 5-minute cleanup ONLY removes completed sessions, not failed.
+        // Periodic Tick does not age out terminal lamps; users dismiss
+        // lamps explicitly from the Indicator UI when they want them gone.
         var store = new SessionViewModelStore();
         var sink = new RecordingSink();
         store.CardEvent += sink.OnEvent;
@@ -489,15 +490,14 @@ public static class Program
         Assert(withHost.TooltipText == "claude-code · abc · macbook", $"got '{withHost.TooltipText}'");
     }
 
-    // ---- Round 2 close-out: completed suppression tombstone ----
+    // ---- Round 2 close-out: completed lamp retention ----
 
-    private static async Task Store_Completed_Hidden_SameSnapshotDoesNotReappear()
+    private static async Task Store_Completed_SameSnapshotStaysVisibleNoRedup()
     {
         await Task.CompletedTask; // sync test
-        // After Tick removes a completed lamp (5 min past updated_at), the
-        // hidden-completed tombstone must suppress any re-broadcast of the
-        // SAME completed event (same updated_at). The lamp stays gone AND
-        // no card is re-fired.
+        // A completed lamp stays visible indefinitely. Re-broadcasting
+        // the same event keeps the lamp visible and does not re-fire the
+        // card because card dedup is still keyed by (session_id, updated_at).
         var store = new SessionViewModelStore();
         var sink = new RecordingSink();
         store.CardEvent += sink.OnEvent;
@@ -506,29 +506,23 @@ public static class Program
         store.ApplySnapshot(new[] { Snap("s1", "completed", t0, message: "done") }, t0);
         Assert(sink.Events.Count == 1, "initial show");
 
-        // Age out the lamp (5+ minutes pass since updated_at).
         store.Tick(t0.AddMinutes(6));
-        Assert(store.Sessions.Count == 0, "lamp aged out");
+        Assert(store.Sessions.Count == 1, "completed lamp stays visible");
 
-        // Re-broadcast the SAME completed event (this is what happens when
-        // an unrelated session's POST causes the Receiver to re-send the
-        // full snapshot including the still-resident s1 entry).
         store.ApplySnapshot(new[] { Snap("s1", "completed", t0, message: "done") }, t0.AddMinutes(10));
-        Assert(store.Sessions.Count == 0, "lamp must NOT reanimate from same updated_at");
+        Assert(store.Sessions.Count == 1, "same updated_at completed remains visible");
         Assert(sink.Events.Count == 1, "no new card events from same updated_at re-broadcast");
 
-        // And once more for good measure.
         store.ApplySnapshot(new[] { Snap("s1", "completed", t0, message: "done") }, t0.AddMinutes(20));
-        Assert(store.Sessions.Count == 0, "lamp still gone");
+        Assert(store.Sessions.Count == 1, "lamp still visible");
         Assert(sink.Events.Count == 1, "still no new card events");
     }
 
-    private static async Task Store_Completed_Hidden_NewerCompletedReappears()
+    private static async Task Store_Completed_NewerCompletedStaysVisibleAndReShows()
     {
         await Task.CompletedTask; // sync test
-        // After Tick removes a completed lamp, a NEWER completed event
-        // (updated_at strictly greater than the tombstone) is treated as
-        // a real new completion: lamp reappears with a new card.
+        // A newer completed event updates the existing green lamp and
+        // re-fires the completed notification card.
         var store = new SessionViewModelStore();
         var sink = new RecordingSink();
         store.CardEvent += sink.OnEvent;
@@ -536,21 +530,21 @@ public static class Program
         var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
         store.ApplySnapshot(new[] { Snap("s1", "completed", t0) }, t0);
         store.Tick(t0.AddMinutes(6));
-        Assert(store.Sessions.Count == 0, "aged out");
+        Assert(store.Sessions.Count == 1, "completed lamp retained");
 
         var t1 = t0.AddSeconds(30);
         store.ApplySnapshot(new[] { Snap("s1", "completed", t1, message: "done again") }, t1);
-        Assert(store.Sessions.Count == 1, "newer completed reappears as lamp");
+        Assert(store.Sessions.Count == 1, "newer completed keeps one lamp");
         Assert(store.Sessions[0].LampColor == "#3FB950", "green");
         Assert(sink.Events.Count == 2, $"newer completed fires a new card event; got {sink.Events.Count}");
         Assert(sink.Events[1].Kind == "Show", "newer completed -> Show");
     }
 
-    private static async Task Store_Completed_Hidden_RunningReappears()
+    private static async Task Store_Completed_RunningTransitionStaysVisible()
     {
         await Task.CompletedTask; // sync test
-        // After Tick removes a completed lamp, a non-completed event for
-        // the same session clears the tombstone and the lamp reappears.
+        // A completed lamp remains present, then transitions normally
+        // when the same session reports running.
         var store = new SessionViewModelStore();
         var sink = new RecordingSink();
         store.CardEvent += sink.OnEvent;
@@ -558,25 +552,20 @@ public static class Program
         var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
         store.ApplySnapshot(new[] { Snap("s1", "completed", t0) }, t0);
         store.Tick(t0.AddMinutes(6));
-        Assert(store.Sessions.Count == 0, "aged out");
+        Assert(store.Sessions.Count == 1, "completed lamp retained");
 
         var t1 = t0.AddMinutes(7);
         store.ApplySnapshot(new[] { Snap("s1", "running", t1) }, t1);
-        Assert(store.Sessions.Count == 1, "running reappears");
+        Assert(store.Sessions.Count == 1, "running keeps same lamp visible");
         Assert(store.Sessions[0].LampColor == "#2F81F7", "blue");
 
-        // And after the lamp reappears, a subsequent same-updated_at
-        // completed re-broadcast is no longer suppressed (tombstone was
-        // cleared by the running event).
         store.ApplySnapshot(new[] { Snap("s1", "running", t1) }, t1.AddMinutes(1));
         Assert(store.Sessions.Count == 1, "running still there");
 
-        // Same-updated_at completed after running -> not tombstoned, so
-        // it shows as a normal completed event.
         var t2 = t1.AddMinutes(2);
         store.ApplySnapshot(new[] { Snap("s1", "completed", t2) }, t2);
         Assert(sink.Events.Any(e => e.Kind == "Show" && e.Status == "completed"),
-            "completed Show event after tombstone cleared");
+            "completed Show event after running transition");
     }
 
     // ---- Round 2 close-out: full-snapshot Agent / Host replacement ----
@@ -826,8 +815,7 @@ public static class Program
         // The same session_id reappearing after authoritative removal
         // must be treated as a brand new session: full re-Show chain
         // (running -> approval Show; or completed -> completed Show
-        // again; etc.) without any stale dedup or tombstone getting
-        // in the way.
+        // again; etc.) without stale dedup getting in the way.
         var store = new SessionViewModelStore();
         var sink = new RecordingSink();
         store.CardEvent += sink.OnEvent;
@@ -852,22 +840,15 @@ public static class Program
         Assert(sink.Events[3].Kind == "Hide", "second Hide event");
     }
 
-    // ---- Round 2 final close-out: aged-completed tombstone survives
-    // authoritative empty snapshot. ----
+    // ---- Round 2 final close-out: completed lamps persist unless
+    // Receiver authoritatively removes them. ----
 
-    private static async Task Store_AuthoritativeEmpty_DoesNotClearAgedCompletedTombstone()
+    private static async Task Store_AuthoritativeEmpty_RemovesCompletedAsReceiverRemoval()
     {
-        // Product rule: when a completed session ages out (5 min past
-        // updated_at), the lamp is dropped and a hidden-completed
-        // tombstone is set. Subsequent identical / older completed
-        // re-broadcasts — including those wrapped in an authoritative
-        // empty snapshot, an authoritative full-snapshot reconnect,
-        // or anything short of a strictly-newer completed updated_at
-        // or a non-completed event for the same session_id — must NOT
-        // bring the lamp back. The aged-completed tombstone is NOT
-        // cleared by an authoritative empty snapshot: empty snapshots
-        // only iterate currently-live _byId sessions and aged-out
-        // completed sessions are no longer in _byId.
+        await Task.CompletedTask; // sync test
+        // Completed lamps no longer age out locally. They are removed
+        // only when Receiver's authoritative snapshot stops reporting
+        // the session, or when the user dismisses the lamp locally.
         var store = new SessionViewModelStore();
         var sink = new RecordingSink();
         store.CardEvent += sink.OnEvent;
@@ -876,81 +857,37 @@ public static class Program
         store.ApplySnapshot(new[] { Snap("s1", "completed", t0) }, t0);
         Assert(sink.Events.Count == 1, "initial completed Show");
 
-        // 5+ minutes pass: Tick ages the lamp out and writes the tombstone.
         store.Tick(t0.AddMinutes(6));
-        Assert(store.Sessions.Count == 0, "completed lamp aged out");
+        Assert(store.Sessions.Count == 1, "completed lamp retained after Tick");
 
-        // Authoritative empty snapshot (e.g. Receiver restart, snapshot
-        // reset). The store iterates _byId — which no longer contains
-        // s1 — so this MUST NOT clear the tombstone. We can't observe
-        // the tombstone directly, but we can observe its effect.
         store.ApplySnapshot(Array.Empty<SessionSnapshot>(), t0.AddMinutes(7));
-        Assert(sink.Events.Count == 1, "no new events from empty snapshot (no current live session to Hide)");
-        Assert(store.Sessions.Count == 0, "still empty");
-
-        // Now an authoritative full snapshot re-broadcasts the SAME
-        // completed event for s1 at the SAME updated_at. This is exactly
-        // the "Receiver forgot to evict this session" / "Receiver
-        // restarted and is re-sending its in-memory table" scenario.
-        // Because the tombstone is still alive (older-or-equal
-        // updated_at), the store must NOT add s1 back, NOT emit a new
-        // Show, NOT make the lamp reanimate.
-        store.ApplySnapshot(new[] { Snap("s1", "completed", t0, message: "done") }, t0.AddMinutes(8));
-        Assert(store.Sessions.Count == 0, "same-updated_at completed must NOT resurrect the lamp");
-        Assert(sink.Events.Count == 1, $"no new card events from same-updated_at re-broadcast; got {sink.Events.Count}");
+        Assert(store.Sessions.Count == 0, "authoritative empty snapshot removes completed lamp");
+        Assert(sink.Events.Count == 2, $"expected Show + Hide, got {sink.Events.Count}");
+        Assert(sink.Events[1].Kind == "Hide", "empty snapshot emits Hide for removed completed session");
     }
 
-    private static async Task Store_AuthoritativeEmpty_NewerCompletedOrRunning_ClearsTombstone()
+    private static async Task Store_TwoCompletedSessions_RemainAfterLongIdle()
     {
-        // Counterpart to the previous test: only a strictly-newer
-        // completed updated_at or a non-completed event for the same
-        // session is allowed to clear an aged-completed tombstone.
-        // (empty / identical / older completed snapshots must not.)
-        //
-        // We start from the same aged-out state as the previous test,
-        // then exercise BOTH clearing paths in independent store
-        // instances to keep each assertion self-contained.
+        await Task.CompletedTask; // sync test
+        var store = new SessionViewModelStore();
+        var sink = new RecordingSink();
+        store.CardEvent += sink.OnEvent;
 
-        // Path A: strictly-newer completed updated_at.
+        var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        store.ApplySnapshot(new[]
         {
-            var store = new SessionViewModelStore();
-            var sink = new RecordingSink();
-            store.CardEvent += sink.OnEvent;
+            Snap("local", "completed", t0, agent: "codex", host: "local"),
+            Snap("remote", "completed", t0.AddSeconds(1), agent: "codex", host: "remote"),
+        }, t0);
 
-            var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-            store.ApplySnapshot(new[] { Snap("s1", "completed", t0) }, t0);
-            store.Tick(t0.AddMinutes(6));
-            store.ApplySnapshot(Array.Empty<SessionSnapshot>(), t0.AddMinutes(7));
-            // Tombstone now blocks same-or-older completed re-broadcasts.
-            var t1 = t0.AddMinutes(10);
-            store.ApplySnapshot(new[] { Snap("s1", "completed", t1, message: "done again") }, t1);
-            Assert(store.Sessions.Count == 1, "newer completed brings the lamp back");
-            Assert(store.Sessions[0].LampColor == "#3FB950", "completed lamp is green");
-            Assert(sink.Events.Count == 2, "new completed Show after tombstone cleared");
-            Assert(sink.Events[1].Kind == "Show", "second event is Show");
-            Assert(sink.Events[1].AutoHideAfterMs == 30000, "completed card auto-hide 30s");
-        }
+        store.Tick(t0.AddMinutes(10));
+        store.Tick(t0.AddHours(2));
 
-        // Path B: a non-completed event for the same session_id
-        // (running, approval, or failed) clears the tombstone and the
-        // lamp reappears.
-        {
-            var store = new SessionViewModelStore();
-            var sink = new RecordingSink();
-            store.CardEvent += sink.OnEvent;
-
-            var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-            store.ApplySnapshot(new[] { Snap("s1", "completed", t0) }, t0);
-            store.Tick(t0.AddMinutes(6));
-            store.ApplySnapshot(Array.Empty<SessionSnapshot>(), t0.AddMinutes(7));
-            // Tombstone blocks same completed; non-completed clears it.
-            var t1 = t0.AddMinutes(10);
-            store.ApplySnapshot(new[] { Snap("s1", "running", t1) }, t1);
-            Assert(store.Sessions.Count == 1, "running clears tombstone and reappears");
-            Assert(store.Sessions[0].LampColor == "#2F81F7", "running lamp is blue");
-            // Running produces no card event; sink only saw the initial Show.
-            Assert(sink.Events.Count == 1, "running does not emit a card event");
-        }
+        var ids = store.Sessions.Select(s => s.SessionId).ToList();
+        Assert(ids.SequenceEqual(new[] { "local", "remote" }),
+            $"both completed sessions should remain; got [{string.Join(",", ids)}]");
+        Assert(store.Sessions.All(s => s.Status == "completed"), "both sessions remain completed");
+        Assert(sink.Events.Count == 2, $"initial completed cards only; got {sink.Events.Count}");
     }
 
     // ---- Round 3 Indicator redesign: LampStateMapper + CardStayPolicy ----

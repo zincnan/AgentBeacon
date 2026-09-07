@@ -8,10 +8,42 @@ $ErrorActionPreference = 'Continue'
 
 Write-Host "== AgentBeacon uninstall =="
 
-foreach ($name in 'agentbeacon-receiver', 'agentbeacon-indicator') {
-    Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force
-    Write-Host "stopped    : $name"
+function Stop-AgentBeaconProcess {
+    param(
+        [string]$Name,
+        [string]$ExpectedPath,
+        [string]$PidFile = ""
+    )
+
+    $stopped = $false
+    if ($PidFile -and (Test-Path $PidFile)) {
+        try {
+            $pidValue = [int](Get-Content $PidFile -Raw)
+            $p = Get-Process -Id $pidValue -ErrorAction Stop
+            if ($p.ProcessName -eq $Name -and $p.Path -eq $ExpectedPath) {
+                $p | Stop-Process -Force
+                $stopped = $true
+            }
+        } catch {
+        }
+        Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+    }
+
+    Get-Process -Name $Name -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $ExpectedPath } |
+        ForEach-Object {
+            $_ | Stop-Process -Force
+            $stopped = $true
+        }
+    $status = if ($stopped) { 'matched install dir' } else { 'not running' }
+    Write-Host "stopped    : $Name ($status)"
 }
+
+Stop-AgentBeaconProcess 'agentbeacon-receiver' `
+    (Join-Path $InstallDir 'receiver\bin\Release\net10.0\agentbeacon-receiver.exe') `
+    (Join-Path $InstallDir 'receiver.pid')
+Stop-AgentBeaconProcess 'agentbeacon-indicator' `
+    (Join-Path $InstallDir 'windows\AgentBeacon.Indicator\bin\Release\net10.0-windows\agentbeacon-indicator.exe')
 
 $startup = [Environment]::GetFolderPath('Startup')
 foreach ($n in 'AgentBeacon Receiver.lnk', 'AgentBeacon Indicator.lnk') {

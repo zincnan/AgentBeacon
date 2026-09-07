@@ -10,8 +10,7 @@ namespace AgentBeacon.Indicator.Core;
 /// The lamp comes back only when the session produces a NEWER event
 /// (updated_at strictly greater than the dismissal watermark):
 ///   - full-snapshot re-broadcasts of the same (session_id, updated_at)
-///     do NOT resurrect a dismissed lamp (same anti-resurrection
-///     principle as the completed-lamp tombstone);
+///     do NOT resurrect a dismissed lamp;
 ///   - any new status / message / updated_at DOES — the session is
 ///     alive again and the user should see it.
 /// </summary>

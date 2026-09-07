@@ -13,26 +13,17 @@ namespace AgentBeacon.Indicator.Core;
 ///
 ///   running   -> no card. Lamp entry only (blue).
 ///   approval  -> persistent card until status changes (yellow lamp).
-///   completed -> card for 5s, lamp entry hidden 5min after updated_at (green).
+///   completed -> card auto-retracts; lamp entry stays visible until
+///                a newer snapshot changes/removes it or the user dismisses it.
 ///   failed    -> card for 10s, lamp entry long-lived until status changes (red).
 ///
 /// Dedup: a card for (session_id, updated_at) is shown at most once; if the
 /// same updated_at arrives again, no event is emitted. A newer updated_at
 /// replaces and re-emits.
 ///
-/// Completed-suppression (Round 2 close-out):
-///   When Tick() removes a completed lamp because its updated_at is older
-///   than CompletedLampDuration, the (session_id, updated_at) pair is
-///   recorded in a hidden-completed tombstone. A subsequent snapshot that
-///   re-reports the SAME completed event (same updated_at) will neither
-///   re-show the lamp nor re-fire a card — this matches the user's
-///   expectation that completed lamps don't reanimate when an unrelated
-///   full-snapshot re-broadcast happens to include them.
-///
-///   A newer completed event (updated_at strictly greater than the
-///   tombstone) clears the tombstone and is treated as a fresh completion.
-///   A non-completed event for the same session always clears the
-///   tombstone (the lamp transitions to a live state).
+/// Completed lamps are not aged out by the Indicator. A completed/idle
+/// agent remains visible as a green lamp until Receiver stops reporting
+/// it, a newer status replaces it, or the user explicitly dismisses it.
 /// </summary>
 public sealed class SessionViewModelStore
 {
@@ -45,9 +36,6 @@ public sealed class SessionViewModelStore
     /// <summary>Card visibility duration for "failed".</summary>
     public static readonly TimeSpan FailedCardDuration = TimeSpan.FromSeconds(30);
 
-    /// <summary>Lamp visibility duration for "completed" sessions, measured from updated_at.</summary>
-    public static readonly TimeSpan CompletedLampDuration = TimeSpan.FromMinutes(5);
-
     private readonly ConcurrentDictionary<string, SessionViewModel> _byId =
         new(StringComparer.Ordinal);
 
@@ -57,16 +45,6 @@ public sealed class SessionViewModelStore
 
     /// <summary>Status at the time we last emitted a card event for a session.</summary>
     private readonly ConcurrentDictionary<string, string> _lastCardShownStatus =
-        new(StringComparer.Ordinal);
-
-    /// <summary>
-    /// Hidden-completed tombstones: session_id -> the updated_at of the
-    /// completed event whose lamp has been aged out and must not
-    /// re-animate on re-broadcast. Cleared on (a) a strictly-newer
-    /// completed event for the same session, or (b) any non-completed
-    /// event for the same session.
-    /// </summary>
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _hiddenCompleted =
         new(StringComparer.Ordinal);
 
     private readonly List<SessionViewModel> _ordered = new();
@@ -103,32 +81,6 @@ public sealed class SessionViewModelStore
             IndicatorStatus.Validate(s.Status);
             present.Add(s.SessionId);
 
-            // Hidden-completed tombstone check: if a session was aged
-            // out as completed and the incoming snapshot repeats that
-            // exact completed event (same updated_at), skip the lamp
-            // and skip the card entirely. A strictly newer completed
-            // event or any non-completed event for the same session
-            // clears the tombstone.
-            if (_hiddenCompleted.TryGetValue(s.SessionId, out var hiddenAt))
-            {
-                if (s.Status == IndicatorStatus.Completed)
-                {
-                    if (s.UpdatedAt <= hiddenAt)
-                    {
-                        // Same or older completed re-broadcast: suppressed.
-                        continue;
-                    }
-                    // Newer completed: clear tombstone and fall through
-                    // to normal processing.
-                    _hiddenCompleted.TryRemove(s.SessionId, out _);
-                }
-                else
-                {
-                    // Any non-completed event supersedes the tombstone.
-                    _hiddenCompleted.TryRemove(s.SessionId, out _);
-                }
-            }
-
             var existing = _byId.TryGetValue(s.SessionId, out var vm) ? vm : null;
 
             if (vm is null)
@@ -164,25 +116,9 @@ public sealed class SessionViewModelStore
         //    lost track of. The WPF layer's Hide handler is idempotent
         //    and safe when no card is present.
         //
-        //    NOTE on hidden-completed tombstones: this loop walks
-        //    _byId.Keys, so it only touches sessions that are CURRENTLY
-        //    live in the lamp column. Aged-out completed sessions were
-        //    already removed from _byId by Tick() (5 min past their
-        //    updated_at) and their tombstones in _hiddenCompleted
-        //    survive on purpose: a later authoritative empty / full
-        //    snapshot must NOT bring them back. Only a strictly-newer
-        //    completed updated_at, or a non-completed event for the
-        //    same session_id, is allowed to clear an aged-completed
-        //    tombstone (see the tombstone check at the top of this
-        //    method and Store_AuthoritativeEmpty_DoesNotClearAgedCompletedTombstone).
-        //
         //    What this loop DOES clear for a removed live session: its
         //    own dedup state (_lastCardShownUpdatedAt /
-        //    _lastCardShownStatus) and any in-flight tombstone it might
-        //    have had under the same id (rare; normally a completed
-        //    session that aged out has already left _byId before this
-        //    loop runs, so this is mostly belt-and-braces for racing
-        //    snapshots).
+        //    _lastCardShownStatus).
         var removed = new List<string>();
         foreach (var id in _byId.Keys)
         {
@@ -203,48 +139,25 @@ public sealed class SessionViewModelStore
             }
             _lastCardShownUpdatedAt.TryRemove(id, out _);
             _lastCardShownStatus.TryRemove(id, out _);
-            _hiddenCompleted.TryRemove(id, out _);
         }
     }
 
     /// <summary>
-    /// Periodic tick to remove completed sessions whose lamp entry has aged
-    /// out (5 minutes past updated_at). Call this every ~30s from the
-    /// WPF Dispatcher. Aged-out completed sessions leave a hidden-completed
-    /// tombstone so re-broadcasts of the same event don't reanimate them.
+    /// Periodic maintenance hook. Completed lamps are intentionally not
+    /// aged out here; they remain visible until replaced, removed by
+    /// Receiver, or manually dismissed in the Indicator UI.
     /// </summary>
     public void Tick(DateTimeOffset now)
     {
-        var toRemove = new List<string>();
-        foreach (var kv in _byId)
-        {
-            if (kv.Value.Status == IndicatorStatus.Completed
-                && now - kv.Value.UpdatedAt >= CompletedLampDuration)
-            {
-                toRemove.Add(kv.Key);
-            }
-        }
-        foreach (var id in toRemove)
-        {
-            if (_byId.TryRemove(id, out var vm))
-            {
-                RemoveFromOrder(vm);
-                // Record the tombstone so a re-broadcast of this exact
-                // completed event won't bring the lamp back.
-                _hiddenCompleted[id] = vm.UpdatedAt;
-            }
-            _lastCardShownUpdatedAt.TryRemove(id, out _);
-            _lastCardShownStatus.TryRemove(id, out _);
-        }
+        _ = now;
     }
 
-    /// <summary>Test helper: clear all state including tombstones.</summary>
+    /// <summary>Test helper: clear all state.</summary>
     public void Reset()
     {
         _byId.Clear();
         _lastCardShownStatus.Clear();
         _lastCardShownUpdatedAt.Clear();
-        _hiddenCompleted.Clear();
         lock (_orderLock) _ordered.Clear();
     }
 

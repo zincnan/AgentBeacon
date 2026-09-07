@@ -28,6 +28,32 @@ Write-Host "== AgentBeacon install =="
 Write-Host "repo       : $Repo"
 Write-Host "install dir: $InstallDir"
 
+function Stop-AgentBeaconProcess {
+    param(
+        [string]$Name,
+        [string]$ExpectedPath,
+        [string]$PidFile = ""
+    )
+
+    if ($PidFile -and (Test-Path $PidFile)) {
+        try {
+            $pidValue = [int](Get-Content $PidFile -Raw)
+            $p = Get-Process -Id $pidValue -ErrorAction Stop
+            if ($p.ProcessName -eq $Name -and $p.Path -eq $ExpectedPath) {
+                $p | Stop-Process -Force
+                Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+                return
+            }
+        } catch {
+        }
+        Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+    }
+
+    Get-Process -Name $Name -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $ExpectedPath } |
+        Stop-Process -Force
+}
+
 # 1. 复制源码到本地目录（Windows .NET SDK 不应在 \\wsl.localhost UNC 路径上构建）
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 robocopy $Repo $InstallDir /E /XD .git bin obj .vs /XF agentbeacon.json /R:1 /W:1 /NFL /NDL /NJH | Out-Null
@@ -54,15 +80,21 @@ if (-not (Test-Path $config)) {
 #    重装/卸载时 Stop-Process -Name 才能找到并停掉它。
 $runReceiver = @'
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
-& (Join-Path $dir 'receiver\bin\Release\net10.0\agentbeacon-receiver.exe') `
-    --config (Join-Path $dir 'agentbeacon.json')
+$exe = Join-Path $dir 'receiver\bin\Release\net10.0\agentbeacon-receiver.exe'
+$cfg = Join-Path $dir 'agentbeacon.json'
+$pidFile = Join-Path $dir 'receiver.pid'
+$p = Start-Process $exe -ArgumentList @('--config', $cfg) -WorkingDirectory $dir -PassThru -WindowStyle Hidden
+Set-Content -Path $pidFile -Value $p.Id -Encoding ASCII
+Wait-Process -Id $p.Id
+Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
 '@
 Set-Content -Path (Join-Path $InstallDir 'run-receiver.ps1') -Value $runReceiver -Encoding UTF8
 
-# 5. 停掉旧实例（避免端口占用）
-foreach ($name in 'agentbeacon-receiver', 'agentbeacon-indicator') {
-    Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force
-}
+# 5. 停掉当前安装目录对应的旧实例（避免误杀其他端口/开发实例）
+$receiverExe = Join-Path $InstallDir 'receiver\bin\Release\net10.0\agentbeacon-receiver.exe'
+$indicatorExe = Join-Path $InstallDir 'windows\AgentBeacon.Indicator\bin\Release\net10.0-windows\agentbeacon-indicator.exe'
+Stop-AgentBeaconProcess 'agentbeacon-receiver' $receiverExe (Join-Path $InstallDir 'receiver.pid')
+Stop-AgentBeaconProcess 'agentbeacon-indicator' $indicatorExe
 
 # 6. 开机自启快捷方式（shell:startup）
 $startup = [Environment]::GetFolderPath('Startup')
@@ -75,7 +107,6 @@ $lnk1.WorkingDirectory = $InstallDir
 $lnk1.WindowStyle = 7
 $lnk1.Save()
 
-$indicatorExe = Join-Path $InstallDir 'windows\AgentBeacon.Indicator\bin\Release\net10.0-windows\agentbeacon-indicator.exe'
 $lnk2 = $ws.CreateShortcut((Join-Path $startup 'AgentBeacon Indicator.lnk'))
 $lnk2.TargetPath = $indicatorExe
 $lnk2.WorkingDirectory = $InstallDir
