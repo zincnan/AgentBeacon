@@ -365,6 +365,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        // A card Show is the moment users notice the lamp + card pair.
+        // Re-promote the lamp window alongside the card without activation
+        // so both surfaces stay in the topmost band.
+        NoActivateHelper.EnsureNoActivate(this);
+
         if (_cards.TryGetValue(ev.Session.SessionId, out var existing))
         {
             // Same session, second Show within the stay window (or
