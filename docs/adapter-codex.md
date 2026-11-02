@@ -35,6 +35,8 @@ python3 plugins/codex/install.py --remove
 { "url": "http://127.0.0.1:8765", "token": null }
 ```
 
+状态上报遵循进程继承的代理设置，并支持 `no_proxy` / `NO_PROXY` 中的 IPv4、IPv6 CIDR 网段，例如 `localhost,127.0.0.1,172.16.0.0/16,10.0.70.0/24,fd00::/8`。小写 `no_proxy` 优先（空值也会覆盖大写）；网段只匹配 Receiver URL 中直接填写的 IP，不额外解析域名。普通 IP、域名和 `*` 保留 Python 原有匹配行为；无效 CIDR 忽略，未命中则继续走原有代理规则。看门狗上报使用相同规则。修改环境变量后需重启 Agent 进程，新配置才会被 hook 继承。
+
 ## 事件 → 状态映射
 
 | Codex hook | 状态 | message |
@@ -67,4 +69,4 @@ plugins/codex/
     └── agentbeacon_watchdog.py       # 每会话看门狗
 ```
 
-测试：`tests/test_codex_adapter.py`（19 个）——映射（含"SessionStart=绿"“Interrupt 忽略”）、envelope（agent=codex）、配置文件回退、节流、看门狗决策、端到端（含 SessionEnd 两条分支）。
+测试：`tests/test_codex_adapter.py`（21 个）——映射（含"SessionStart=绿"“Interrupt 忽略”）、envelope（agent=codex）、配置文件回退、节流、看门狗决策、端到端（含 SessionEnd 两条分支），以及 CIDR 绕过和代理路由回归。

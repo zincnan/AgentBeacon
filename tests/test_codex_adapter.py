@@ -12,6 +12,8 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from adapter_proxy_cases import ProxyRoutingCases
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "plugins", "codex", "scripts")
 sys.path.insert(0, SCRIPTS)
@@ -19,6 +21,11 @@ sys.path.insert(0, SCRIPTS)
 import agentbeacon_codex_hook as adapter  # noqa: E402
 
 HOOK = os.path.join(SCRIPTS, "agentbeacon_codex_hook.py")
+
+
+class TestProxyRouting(ProxyRoutingCases, unittest.TestCase):
+    adapter = adapter
+    hook = HOOK
 
 
 class RecordingReceiver(BaseHTTPRequestHandler):

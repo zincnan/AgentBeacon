@@ -38,6 +38,8 @@ claude --plugin-dir plugins/claude-code
 - 环境变量（`AGENTBEACON_URL` / `AGENTBEACON_TOKEN`）与插件安装配置（`--config agentbeacon_url=...`）仍然优先于该文件 —— 临时覆盖、CI、测试不受影响
 - 文件缺失或损坏不报错，hook 静默跳过（还有其它来源兜底）
 
+状态上报遵循进程继承的代理设置，并支持 `no_proxy` / `NO_PROXY` 中的 IPv4、IPv6 CIDR 网段，例如 `localhost,127.0.0.1,172.16.0.0/16,10.0.70.0/24,fd00::/8`。小写 `no_proxy` 优先（空值也会覆盖大写）；网段只匹配 Receiver URL 中直接填写的 IP，不额外解析域名。普通 IP、域名和 `*` 保留 Python 原有匹配行为；无效 CIDR 忽略，未命中则继续走原有代理规则。看门狗上报使用相同规则。修改环境变量后需重启 Agent 进程，新配置才会被 hook 继承。
+
 注意：claude 跑在 WSL/Linux 时，Windows Receiver 必须绑定到 WSL 可达的地址（`--bind 0.0.0.0` 或 LAN IP），不能用 `127.0.0.1`。
 
 ## 事件 → 状态映射
@@ -89,7 +91,7 @@ plugins/claude-code/
     └── agentbeacon_watchdog.py    # 每会话看门狗（failed 路径 2）
 ```
 
-测试：`tests/test_hook_adapter.py`（27 个）—— 映射表、envelope、节流、看门狗决策、以及用本地 HTTP 假 Receiver 跑真实脚本的端到端（含 SessionEnd 两条分支）。
+测试：`tests/test_hook_adapter.py`（35 个）—— 映射表、envelope、节流、看门狗决策、以及用本地 HTTP 假 Receiver 跑真实脚本的端到端（含 SessionEnd 两条分支），以及 CIDR 绕过和代理路由回归。
 
 ## 真机验收过的场景
 

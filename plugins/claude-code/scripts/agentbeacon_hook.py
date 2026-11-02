@@ -37,6 +37,7 @@ Config (first hit wins):
                         tests and one-off runs keep working.
 """
 
+import ipaddress
 import json
 import os
 import socket
@@ -44,6 +45,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 AGENT = "claude-code"
@@ -264,6 +266,29 @@ def remove_sidecar(session_id):
         pass
 
 
+class CidrProxyHandler(urllib.request.ProxyHandler):
+    """Extend urllib's proxy bypass rules with literal-IP CIDR matching."""
+
+    def proxy_open(self, req, proxy, type):
+        try:
+            address = ipaddress.ip_address(urllib.parse.urlsplit(req.full_url).hostname)
+        except ValueError:
+            return super().proxy_open(req, proxy, type)
+
+        for entry in self.proxies.get("no", "").split(","):
+            entry = entry.strip()
+            if "/" not in entry:
+                continue
+            try:
+                network = ipaddress.ip_network(entry, strict=False)
+            except ValueError:
+                continue
+            if address in network:
+                return None
+
+        return super().proxy_open(req, proxy, type)
+
+
 def post_status(url, token, envelope):
     body = json.dumps(envelope).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -276,7 +301,8 @@ def post_status(url, token, envelope):
         data=body,
         headers=headers,
         method="POST")
-    with urllib.request.urlopen(req, timeout=POST_TIMEOUT_S) as resp:
+    opener = urllib.request.build_opener(CidrProxyHandler())
+    with opener.open(req, timeout=POST_TIMEOUT_S) as resp:
         resp.read()
 
 
