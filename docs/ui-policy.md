@@ -25,7 +25,7 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 
 - 一个模块对应一个 `session_id`，不是对应一个 Agent 类型；同一 agent 的多个并发 session 会出现多个同名模块。
 - v1 严格只有上述四种亮起颜色，**不引入灰色（offline / idle / unknown / paused / connecting）第五状态**。
-- `completed` 的模块持续保留，直到 Receiver 不再上报该 session、状态被新事件替换，或用户右键关闭。
+- `completed` / `failed` 连续保持同一状态达到配置时长后自动关闭（默认 20 分钟）；`running` / `approval` 不自动关闭。
 - 状态映射的 canonical 实现在 `Indicator.Core` 的 `LampStateMapper.ForStatus`，未知 status 直接抛异常（fail-fast）。
 - 模块 hover 显示 Tooltip：`agent · session_id · host`（host 可选）。Tooltip 是 `agent` 与 `host` 的函数；任一字段在后续快照中被替换，Tooltip 都随之刷新（whole-event replacement）。
 
@@ -35,8 +35,8 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 | ----------- | --------------------------------------------------------------------- |
 | `running`   | **不弹卡片**。只更新对应模块的灯位/颜色。                               |
 | `approval`  | **弹出卡片**，停留 **30 秒** 后自动收回；**黄色灯保持**直到状态变化。    |
-| `completed` | **弹出卡片**，展示最近一次的 `message`（如有）。卡片停留 **30 秒** 后自动收回。模块继续保留。 |
-| `failed`    | **弹出卡片**，展示 `message`（如有）。卡片停留 **30 秒** 后自动收回。红色灯长期保留。 |
+| `completed` | **弹出卡片**，展示最近一次的 `message`（如有）。卡片停留 **30 秒** 后自动收回。绿灯同状态持续默认 20 分钟后自动关闭。 |
+| `failed`    | **弹出卡片**，展示 `message`（如有）。卡片停留 **30 秒** 后自动收回。红灯同状态持续默认 20 分钟后自动关闭。 |
 
 时长（30 秒）是 **UI 常量**，不属于 HTTP Protocol v1，可独立调整。
 
@@ -51,23 +51,25 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 - 卡片右上角有 ✕ 按钮，点击可**提前收回**（走与自然到期相同的收回动画并清理计时器）；卡片文案为中文（运行中 / 等待授权 / 已完成 / 失败）。
 - 卡片与模块均使用 `ShowActivated=False` + `WS_EX_NOACTIVATE`，**不抢占前台焦点**。
 
-## 3. completed 状态灯的保留
+## 3. 红绿灯的超时自动关闭
 
-- `completed` 状态的 Session 在状态灯列表中持续保留，显示为底部绿灯。
-- Indicator 不根据时间把 `completed` 灯自动移除；`Tick()` 不执行 completed aging。
+- `completed` 绿灯和 `failed` 红灯连续保持同一状态达到配置时长后，执行与右键「关闭此灯」相同的操作；默认 20 分钟。
+- 在 Windows 端 `agentbeacon.json` 设置 `"indicator_lamp_auto_close_minutes": 20`，单位为分钟，只接受正整数。缺省或无效值回退到 20；修改后重启 Indicator 生效。
+- 从该灯在本次 Indicator 进程中首次显示，或进入新的红/绿状态时开始本地计时。变为蓝灯或黄灯取消计时；同色消息更新、重复快照和其他会话更新不重置计时。
+- 复用已有 30 秒维护定时器，正常运行时在到期后的下一次检查关闭，不依赖新的状态上报。
+- 关闭时拆除模块、收回卡片并取消卡片计时器；最后一个模块关闭后隐藏主窗口，旧快照不会显示空窗口。
+- 自动关闭只改变 Indicator 本地显示，Receiver 和 Core store 中的会话记录不删除。重启 Indicator 后重新计时，不持久化本地计时和关闭水位。
 - 如果 Receiver 的 authoritative snapshot 不再包含该 session，Indicator 会移除对应模块并收回卡片。
-- 用户可以通过右键「关闭此灯」主动隐藏；同 session 后续产生严格更新的 `updated_at` 时会自动恢复。
+- 自动关闭和右键关闭使用相同恢复规则：同 session 后续产生严格更新的 `updated_at` 时恢复，即使新事件仍为同色；重建后重新计时。
 
 ## 4. failed 状态灯与卡片的分离
 
 `failed` 在 v1 中**严格分离卡片与状态灯的保留策略**：
 
-- **`failed` 状态灯**：红色，长期保留，直到下一次状态变化或用户手动清理。
+- **`failed` 状态灯**：红色，同状态持续达到配置时长后自动关闭，也可通过右键提前关闭。
 - **`failed` 通知卡片**：弹卡片，停留 **30 秒**（UI 常量）后自动隐藏。后续同一 Session 的 `updated_at` 推进会触发新的卡片。
 
-也就是说：状态灯是"长期可见"，卡片是"瞬时通知"。两者互不耦合。
-
-不做超时清理是因为失败往往需要人工介入确认；但卡片本身不应该永久停留阻塞 UI。
+卡片的 30 秒计时和红灯的自动关闭计时相互独立；同色新消息可以重新弹卡片，但不会推迟红灯的自动关闭时间。
 
 ## 5. 去重 / 重发
 
@@ -75,13 +77,12 @@ v1 规则如下。后续如果发现需要更复杂的策略（例如不同 agen
 - 同一 Session 收到**更新**的 `updated_at` 时，按新事件重新触发 `Show`：approval/completed/failed 均重置 30 秒停留。
 - 这是 UI 层的去重，不是协议层的语义。协议层不保证 `updated_at` 单调，只保证 last-received-wins。
 
-### 5.1 completed 灯不做时间墓碑
+### 5.1 自动关闭后的去重与恢复
 
-completed 灯不再按时间老化，因此没有 completed aging 水位：
-
-- **同一 `(session_id, updated_at)` 的 completed 重发**：灯继续保留，卡片不重弹。
-- **同一 session 的 newer completed（updated_at 严格更大）**：更新现有绿灯，并重新弹 30s 卡片。
-- **同一 session 的非 completed 事件**（running / approval / failed）：按新状态正常更新同一模块。
+- **同一 `(session_id, updated_at)` 的重发**：不会恢复已经关闭的灯，也不会重弹卡片。
+- **同一 session 的严格更新事件**：按现有关闭水位规则恢复模块；若状态需要卡片，正常弹出。
+- **灯尚未关闭时的同色更新**：内容和卡片照常更新，自动关闭计时保持原起点。
+- **Receiver 删除 session**：清除该 session 的计时和关闭水位；以后重新出现时按新模块处理。
 
 不允许用灰色 / idle / unknown 等第五种状态表达“隐藏”——隐藏只是“当前没有灯要画”的状态，不是 UI 状态。
 
@@ -93,7 +94,7 @@ completed 灯不再按时间老化，因此没有 completed aging 水位：
 - 网络是否中断 / Receiver 是否离线
 - Agent 是否空闲
 
-Indicator 只展示协议上报过的最新状态。如果一个 Session 不再上报，Indicator 显示的就是它最后一次上报的状态，不会自动转灰、不会显示“最后心跳时间”，也不会自己推断它是“离线了”。这与协议层“last received wins”的语义保持一致。
+Indicator 只展示协议上报过的最新状态，不会自动转灰、不会显示“最后心跳时间”，也不会自己推断它是“离线了”。红绿灯超时关闭只是本地显示清理，不表示会话离线或 Receiver 删除记录。
 
 ## 7. 未知状态的防御
 

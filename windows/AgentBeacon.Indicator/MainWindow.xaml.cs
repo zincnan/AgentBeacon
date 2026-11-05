@@ -72,11 +72,13 @@ public partial class MainWindow : Window
     private bool _userMoved;
 
     private readonly DispatcherTimer _tickTimer;
+    private readonly LampAutoCloseTracker _lampAutoClose;
     private bool _layoutRefreshQueued;
 
-    public MainWindow()
+    public MainWindow(int lampAutoCloseMinutes = AgentBeaconConfig.DefaultIndicatorLampAutoCloseMinutes)
     {
         InitializeComponent();
+        _lampAutoClose = new LampAutoCloseTracker(TimeSpan.FromMinutes(lampAutoCloseMinutes));
 
         SourceInitialized += (_, _) => NoActivateHelper.EnsureNoActivate(this);
 
@@ -103,7 +105,13 @@ public partial class MainWindow : Window
         {
             Interval = TimeSpan.FromSeconds(30),
         };
-        _tickTimer.Tick += (_, _) => _host?.Tick(DateTimeOffset.UtcNow);
+        _tickTimer.Tick += (_, _) =>
+        {
+            var now = DateTimeOffset.UtcNow;
+            _host?.Tick(now);
+            foreach (var sessionId in _lampAutoClose.GetExpiredSessionIds(now))
+                DismissModule(sessionId);
+        };
         _tickTimer.Start();
 
         LoadCustomLabels();
@@ -153,11 +161,6 @@ public partial class MainWindow : Window
             TeardownAll();
             return;
         }
-        else
-        {
-            if (!IsVisible) ShowNoActivate();
-        }
-
         RebuildModules(sessions);
     }
 
@@ -172,7 +175,7 @@ public partial class MainWindow : Window
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var s in sessions) present.Add(s.SessionId);
         var removedIds = new List<string>();
-        foreach (var id in _modules.Keys)
+        foreach (var id in _sessionUpdatedAt.Keys)
         {
             if (!present.Contains(id)) removedIds.Add(id);
         }
@@ -183,6 +186,7 @@ public partial class MainWindow : Window
             _moduleCenterYScreen.Remove(id);
             _sessionUpdatedAt.Remove(id);
             _dismissedAt.Remove(id);
+            _lampAutoClose.Remove(id);
             ForceRetractCard(id, immediate: true);
         }
 
@@ -206,6 +210,7 @@ public partial class MainWindow : Window
         // Step 3: update or insert modules in snapshot order. The
         // bottom margin on every module except the last supplies the
         // ModuleGap vertical spacing.
+        var now = DateTimeOffset.UtcNow;
         for (int i = 0; i < shown.Count; i++)
         {
             var s = shown[i];
@@ -253,11 +258,22 @@ public partial class MainWindow : Window
 
             module.Margin = new Thickness(0, 0, 0,
                 i == shown.Count - 1 ? 0 : IndicatorUiConstants.ModuleGap);
+            _lampAutoClose.Observe(s.SessionId, s.Status, now);
+        }
+
+        if (_modules.Count == 0)
+        {
+            if (IsVisible) Hide();
+        }
+        else if (!IsVisible)
+        {
+            ShowNoActivate();
         }
 
         // Step 3: cache module center Y (screen coords) for every live
         // module. The anchor math uses window.Left/Top (screen) + the
         // module's offset relative to the window.
+        UpdateLayout();
         ModuleStack.UpdateLayout();
         UpdateModuleCenterYCaches();
 
@@ -290,6 +306,12 @@ public partial class MainWindow : Window
         {
             return;
         }
+        DismissModule(sessionId);
+    }
+
+    private void DismissModule(string sessionId)
+    {
+        if (!_modules.TryGetValue(sessionId, out var module)) return;
         _dismissedAt[sessionId] = _sessionUpdatedAt.TryGetValue(sessionId, out var updatedAt)
             ? updatedAt
             : DateTimeOffset.UtcNow;
@@ -297,6 +319,14 @@ public partial class MainWindow : Window
         ModuleStack.Children.Remove(module);
         _modules.Remove(sessionId);
         _moduleCenterYScreen.Remove(sessionId);
+        _lampAutoClose.Remove(sessionId);
+        for (int i = 0; i < ModuleStack.Children.Count; i++)
+        {
+            if (ModuleStack.Children[i] is LampModuleView remaining)
+                remaining.Margin = new Thickness(0, 0, 0,
+                    i == ModuleStack.Children.Count - 1 ? 0 : IndicatorUiConstants.ModuleGap);
+        }
+        if (_modules.Count == 0 && IsVisible) Hide();
         QueueLayoutRefresh();
     }
 
@@ -365,6 +395,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!_modules.ContainsKey(ev.Session.SessionId)) return;
+
         // A card Show is the moment users notice the lamp + card pair.
         // Re-promote the lamp window alongside the card without activation
         // so both surfaces stay in the topmost band.
@@ -389,13 +421,6 @@ public partial class MainWindow : Window
         }
 
         // First-time Show for this session.
-        if (!_modules.TryGetValue(ev.Session.SessionId, out _))
-        {
-            // No module to anchor to (race with authoritative removal):
-            // nothing to do.
-            return;
-        }
-
         var card = new CardWindow();
         card.WindowStartupLocation = WindowStartupLocation.Manual;
         card.UpdateFrom(ev.Session);
@@ -602,6 +627,7 @@ public partial class MainWindow : Window
         _moduleCenterYScreen.Clear();
         _sessionUpdatedAt.Clear();
         _dismissedAt.Clear();
+        _lampAutoClose.Clear();
         ModuleStack.Children.Clear();
     }
 

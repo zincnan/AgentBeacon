@@ -21,9 +21,9 @@ namespace AgentBeacon.Indicator.Core;
 /// same updated_at arrives again, no event is emitted. A newer updated_at
 /// replaces and re-emits.
 ///
-/// Completed lamps are not aged out by the Indicator. A completed/idle
-/// agent remains visible as a green lamp until Receiver stops reporting
-/// it, a newer status replaces it, or the user explicitly dismisses it.
+/// The store retains Receiver state regardless of local lamp visibility.
+/// MainWindow handles manual dismissal and timed terminal-lamp dismissal
+/// separately, keeping the same watermark-based recovery rule for both.
 /// </summary>
 public sealed class SessionViewModelStore
 {
@@ -143,9 +143,8 @@ public sealed class SessionViewModelStore
     }
 
     /// <summary>
-    /// Periodic maintenance hook. Completed lamps are intentionally not
-    /// aged out here; they remain visible until replaced, removed by
-    /// Receiver, or manually dismissed in the Indicator UI.
+    /// Periodic store maintenance hook. Local lamp timeout/dismissal is
+    /// handled by the Indicator UI and does not remove Receiver state.
     /// </summary>
     public void Tick(DateTimeOffset now)
     {

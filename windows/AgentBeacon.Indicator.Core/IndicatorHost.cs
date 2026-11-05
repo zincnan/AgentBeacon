@@ -76,7 +76,7 @@ public sealed class IndicatorHost : IDisposable
         }
     }
 
-    /// <summary>Drives the 5-minute completed-session cleanup. Call from WPF timer tick.</summary>
+    /// <summary>Drives store maintenance; local lamp auto-close is handled by the WPF timer.</summary>
     public void Tick(DateTimeOffset now)
     {
         lock (_storeGate)

@@ -144,7 +144,7 @@ Indicator 是 Windows 桌面右上角的状态灯与通知卡片 UI，作为**�
 - 连接 Receiver 的 Named Pipe（默认 `AgentBeacon.Status`，可通过 `--pipe <name>` 覆盖）
 - 按 `session_id` 渲染一盏独立的状态灯
 - 按 UI 策略弹出通知卡片（详见 [docs/ui-policy.md](ui-policy.md)）
-- 持续保留 `completed`/idle 绿灯，直到 Receiver 删除、状态更新或用户右键关闭
+- 红绿灯同状态持续默认 20 分钟后自动关闭（`indicator_lamp_auto_close_minutes` 可配置），与右键关闭共用恢复规则；蓝黄灯不自动关闭
 - 状态灯 hover 显示 `agent / session_id / host` tooltip（whole-event replacement：`agent` 或 `host` 变化都会刷新 tooltip）
 - 卡片从所属灯模块左侧弹出/停留/收回，多卡碰撞自动避让
 - 状态变化时非 running 的灯闪烁数秒（真实红绿灯语义）；亮灯带同色辉光

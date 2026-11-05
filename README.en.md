@@ -37,8 +37,10 @@ Each agent session is a vertical three-light module with the agent name above it
 | --- | --- | --- | --- |
 | Bottom blue | `running` | The agent is working | No card |
 | Middle yellow | `approval` | Waiting for your permission | Slides out for 30 seconds; yellow light stays on |
-| Bottom green | `completed` | Current turn is done | Slides out for 30 seconds; green light stays for 5 minutes |
-| Top red | `failed` | Something failed | Slides out for 30 seconds; red light stays on |
+| Bottom green | `completed` | Current turn is done | Slides out for 30 seconds; light auto-closes after 20 minutes in the same state |
+| Top red | `failed` | Something failed | Slides out for 30 seconds; light auto-closes after 20 minutes in the same state |
+
+Set `indicator_lamp_auto_close_minutes` in the Windows `agentbeacon.json` to a positive integer, then restart Indicator. Missing or invalid values default to 20 minutes. Blue and yellow lights do not auto-close. A newer event restores a closed light using the same rule as manual dismissal.
 
 <table>
   <tr>

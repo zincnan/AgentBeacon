@@ -85,6 +85,14 @@ public static class Program
             ("LampDismissal_NeverDismissed_Shows",                LampDismissal_NeverDismissed_Shows),
             ("LampDismissal_SameOrOlderEvent_StaysHidden",        LampDismissal_SameOrOlderEvent_StaysHidden),
             ("LampDismissal_NewerEvent_Reactivates",              LampDismissal_NewerEvent_Reactivates),
+            ("LampAutoClose_TerminalBoundary",                    LampAutoClose_TerminalBoundary),
+            ("LampAutoClose_BlueYellowNeverExpire",                LampAutoClose_BlueYellowNeverExpire),
+            ("LampAutoClose_SameStateDoesNotReset",                LampAutoClose_SameStateDoesNotReset),
+            ("LampAutoClose_StateTransitionsReset",                LampAutoClose_StateTransitionsReset),
+            ("LampAutoClose_SessionsExpireIndependently",          LampAutoClose_SessionsExpireIndependently),
+            ("LampAutoClose_RemoveAndClearRestartTimers",          LampAutoClose_RemoveAndClearRestartTimers),
+            ("LampAutoClose_DismissalRecovery",                    LampAutoClose_DismissalRecovery),
+            ("Config_LampAutoCloseMinutes",                        Config_LampAutoCloseMinutes),
             ("IndicatorHost_FirstApproval_DispatchesSnapshotBeforeCard",
                                                               IndicatorHost_FirstApproval_DispatchesSnapshotBeforeCard),
 
@@ -1189,6 +1197,176 @@ public static class Program
             safeTop: 100, safeBottom: 800, gap: 8);
         Assert(p2["bottom"].Top == 700, $"bottom clamp; got {p2["bottom"].Top}");
         Assert(p2["bottom"].Visible, "still fits");
+    }
+
+    private static Task LampAutoClose_TerminalBoundary()
+    {
+        foreach (var status in new[] { IndicatorStatus.Completed, IndicatorStatus.Failed })
+        {
+            var tracker = new LampAutoCloseTracker(TimeSpan.FromMinutes(20));
+            var t0 = DateTimeOffset.UnixEpoch;
+            tracker.Observe("a", status, t0);
+            Assert(tracker.GetExpiredSessionIds(t0.AddMinutes(20).AddTicks(-1)).Count == 0,
+                $"{status} retained before deadline");
+            Assert(tracker.GetExpiredSessionIds(t0.AddMinutes(20)).SequenceEqual(new[] { "a" }),
+                $"{status} expires at deadline");
+        }
+
+        var custom = new LampAutoCloseTracker(TimeSpan.FromMinutes(1));
+        custom.Observe("a", IndicatorStatus.Completed, DateTimeOffset.UnixEpoch);
+        Assert(custom.GetExpiredSessionIds(DateTimeOffset.UnixEpoch.AddMinutes(1)).Count == 1,
+            "custom minute timeout honored");
+        return Task.CompletedTask;
+    }
+
+    private static Task LampAutoClose_BlueYellowNeverExpire()
+    {
+        var tracker = new LampAutoCloseTracker(TimeSpan.FromMinutes(20));
+        var t0 = DateTimeOffset.UnixEpoch;
+        tracker.Observe("blue", IndicatorStatus.Running, t0);
+        tracker.Observe("yellow", IndicatorStatus.Approval, t0);
+        Assert(tracker.GetExpiredSessionIds(t0.AddDays(30)).Count == 0,
+            "running and approval never auto-close");
+        return Task.CompletedTask;
+    }
+
+    private static Task LampAutoClose_SameStateDoesNotReset()
+    {
+        foreach (var status in new[] { IndicatorStatus.Completed, IndicatorStatus.Failed })
+        {
+            var tracker = new LampAutoCloseTracker(TimeSpan.FromMinutes(20));
+            var t0 = DateTimeOffset.UnixEpoch;
+            tracker.Observe("a", status, t0);
+            tracker.Observe("a", status, t0.AddMinutes(19));
+            Assert(tracker.GetExpiredSessionIds(t0.AddMinutes(20)).Contains("a"),
+                $"{status} same-state updates do not restart the clock");
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task LampAutoClose_StateTransitionsReset()
+    {
+        var t0 = DateTimeOffset.UnixEpoch;
+        foreach (var intermediate in new[] { IndicatorStatus.Running, IndicatorStatus.Approval })
+        {
+            var tracker = new LampAutoCloseTracker(TimeSpan.FromMinutes(20));
+            tracker.Observe("a", IndicatorStatus.Completed, t0);
+            tracker.Observe("a", intermediate, t0.AddMinutes(19));
+            Assert(tracker.GetExpiredSessionIds(t0.AddHours(2)).Count == 0,
+                $"switching to {intermediate} cancels terminal timer");
+            tracker.Observe("a", IndicatorStatus.Failed, t0.AddHours(3));
+            Assert(tracker.GetExpiredSessionIds(t0.AddHours(3).AddMinutes(19)).Count == 0,
+                "new terminal state gets a fresh timer");
+            Assert(tracker.GetExpiredSessionIds(t0.AddHours(3).AddMinutes(20)).Contains("a"),
+                "new terminal deadline honored");
+        }
+
+        var colorChange = new LampAutoCloseTracker(TimeSpan.FromMinutes(20));
+        colorChange.Observe("a", IndicatorStatus.Completed, t0);
+        colorChange.Observe("a", IndicatorStatus.Failed, t0.AddMinutes(19));
+        Assert(colorChange.GetExpiredSessionIds(t0.AddMinutes(20)).Count == 0,
+            "green to red resets the timer");
+        Assert(colorChange.GetExpiredSessionIds(t0.AddMinutes(39)).Contains("a"),
+            "red gets a full twenty minutes");
+        return Task.CompletedTask;
+    }
+
+    private static Task LampAutoClose_SessionsExpireIndependently()
+    {
+        var tracker = new LampAutoCloseTracker(TimeSpan.FromMinutes(20));
+        var t0 = DateTimeOffset.UnixEpoch;
+        tracker.Observe("a", IndicatorStatus.Completed, t0);
+        tracker.Observe("b", IndicatorStatus.Failed, t0.AddMinutes(10));
+        tracker.Observe("a", IndicatorStatus.Completed, t0.AddMinutes(10));
+        Assert(tracker.GetExpiredSessionIds(t0.AddMinutes(20)).SequenceEqual(new[] { "a" }),
+            "another session's snapshot does not extend a's deadline");
+        foreach (var id in tracker.GetExpiredSessionIds(t0.AddMinutes(30)))
+            tracker.Remove(id);
+        Assert(tracker.GetExpiredSessionIds(t0.AddHours(2)).Count == 0,
+            "expired ID list can be consumed while removing timers");
+        return Task.CompletedTask;
+    }
+
+    private static Task LampAutoClose_RemoveAndClearRestartTimers()
+    {
+        var tracker = new LampAutoCloseTracker(TimeSpan.FromMinutes(20));
+        var t0 = DateTimeOffset.UnixEpoch;
+        tracker.Observe("a", IndicatorStatus.Completed, t0);
+        tracker.Remove("a");
+        Assert(tracker.GetExpiredSessionIds(t0.AddDays(1)).Count == 0,
+            "removed or dismissed lamp has no timer");
+        tracker.Observe("a", IndicatorStatus.Completed, t0.AddHours(1));
+        Assert(tracker.GetExpiredSessionIds(t0.AddHours(1).AddMinutes(19)).Count == 0,
+            "recreated session gets a fresh timer");
+        tracker.Clear();
+        Assert(tracker.GetExpiredSessionIds(t0.AddDays(2)).Count == 0,
+            "empty snapshot clears all timers");
+        return Task.CompletedTask;
+    }
+
+    private static Task LampAutoClose_DismissalRecovery()
+    {
+        var tracker = new LampAutoCloseTracker(TimeSpan.FromMinutes(20));
+        var store = new SessionViewModelStore();
+        var t0 = DateTimeOffset.UnixEpoch;
+        var original = Snap("a", IndicatorStatus.Completed, t0);
+        store.ApplySnapshot(new[] { original }, t0);
+        tracker.Observe("a", store.Sessions[0].Status, t0);
+        Assert(tracker.GetExpiredSessionIds(t0.AddMinutes(20)).Contains("a"), "lamp expires");
+        var dismissedAt = store.Sessions[0].UpdatedAt;
+        tracker.Remove("a");
+        store.ApplySnapshot(new[] { original }, t0.AddMinutes(21));
+        Assert(!LampDismissal.ShouldShow(dismissedAt, store.Sessions[0].UpdatedAt),
+            "replayed old event cannot revive auto-closed lamp");
+        Assert(tracker.GetExpiredSessionIds(t0.AddMinutes(21)).Count == 0,
+            "closed lamp is no longer tracked");
+        Assert(store.Sessions.Count == 1, "auto-close leaves Receiver snapshot state intact");
+
+        store.ApplySnapshot(new[] { Snap("a", IndicatorStatus.Completed, t0.AddMinutes(25)) },
+            t0.AddMinutes(25));
+        Assert(LampDismissal.ShouldShow(dismissedAt, store.Sessions[0].UpdatedAt),
+            "new same-color event can revive lamp using existing dismissal rule");
+        tracker.Observe("a", store.Sessions[0].Status, t0.AddMinutes(25));
+        Assert(tracker.GetExpiredSessionIds(t0.AddMinutes(44)).Count == 0,
+            "revived lamp has a fresh timer");
+        Assert(tracker.GetExpiredSessionIds(t0.AddMinutes(45)).Contains("a"),
+            "revived lamp expires at its new deadline");
+        return Task.CompletedTask;
+    }
+
+    private static Task Config_LampAutoCloseMinutes()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"agentbeacon-config-{Guid.NewGuid():N}.json");
+        try
+        {
+            var cases = new (string Json, int Expected)[]
+            {
+                ("{}", 20),
+                ("{\"indicator_lamp_auto_close_minutes\":1}", 1),
+                ("{\"indicator_lamp_auto_close_minutes\":45}", 45),
+                ("{\"indicator_lamp_auto_close_minutes\":2147483647}", int.MaxValue),
+                ("{\"indicator_lamp_auto_close_minutes\":0}", 20),
+                ("{\"indicator_lamp_auto_close_minutes\":-1}", 20),
+                ("{\"indicator_lamp_auto_close_minutes\":1.5}", 20),
+                ("{\"indicator_lamp_auto_close_minutes\":2147483648}", 20),
+                ("{\"indicator_lamp_auto_close_minutes\":\"5\"}", 20),
+                ("{\"indicator_lamp_auto_close_minutes\":null}", 20),
+                ("{\"indicator_lamp_auto_close_minutes\":true}", 20),
+                ("{\"indicator_lamp_auto_close_minutes\":[]}", 20),
+            };
+            foreach (var (json, expected) in cases)
+            {
+                File.WriteAllText(path, json);
+                Assert(AgentBeaconConfig.TryLoad(path, out var config, out var error),
+                    $"UI timeout must not reject Receiver configuration: {error}");
+                Assert(config?.IndicatorLampAutoCloseMinutes == expected, $"timeout for {json}");
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+        return Task.CompletedTask;
     }
 
     private static async Task AnchoredCardLayout_NoRoom_HidesOlderNotNewer()

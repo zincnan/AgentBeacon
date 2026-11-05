@@ -17,7 +17,8 @@ namespace AgentBeacon.Shared;
 ///   "token": "shared-secret",     // shared-bearer auth
 ///   "no_auth": false,             // true = auth disabled (dev / trusted LAN)
 ///   "debug": false,
-///   "pipe": "AgentBeacon.Status"  // null = disable Named Pipe IPC
+///   "pipe": "AgentBeacon.Status", // null = disable Named Pipe IPC
+///   "indicator_lamp_auto_close_minutes": 20
 /// }
 ///
 /// "token" and "no_auth": true are mutually exclusive within one source.
@@ -34,6 +35,10 @@ public sealed record AgentBeaconConfig(
     bool PipeSpecified)
 {
     public const string FileName = "agentbeacon.json";
+    public const int DefaultIndicatorLampAutoCloseMinutes = 20;
+
+    /// <summary>UI-only timeout; missing or invalid values use the default.</summary>
+    public int IndicatorLampAutoCloseMinutes { get; init; } = DefaultIndicatorLampAutoCloseMinutes;
 
     /// <summary>
     /// Find the first existing config file: any explicit path (in order),
@@ -152,8 +157,20 @@ public sealed record AgentBeaconConfig(
                 // pipe: null → PipeSpecified=true with Pipe=null → disable IPC.
             }
 
+            var lampAutoCloseMinutes = DefaultIndicatorLampAutoCloseMinutes;
+            if (root.TryGetProperty("indicator_lamp_auto_close_minutes", out var autoClose)
+                && autoClose.ValueKind == JsonValueKind.Number
+                && autoClose.TryGetInt32(out var minutes)
+                && minutes > 0)
+            {
+                lampAutoCloseMinutes = minutes;
+            }
+
             config = new AgentBeaconConfig(bind, port, token, noAuth, dbg,
-                pipe, pipeSpecified);
+                pipe, pipeSpecified)
+            {
+                IndicatorLampAutoCloseMinutes = lampAutoCloseMinutes,
+            };
             return true;
         }
         catch (JsonException ex)

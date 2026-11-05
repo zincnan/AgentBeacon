@@ -23,13 +23,16 @@
 
 二、改配置
 
-    编辑本文件夹的 agentbeacon.json（就三个字段）：
+    编辑本文件夹的 agentbeacon.json：
 
         bind     监听地址（默认 0.0.0.0，一般不用动）
         port     服务端口（默认 8765）
         token    与 Agent 侧约定的 key；空字符串 "" = 免 key（默认）
+        indicator_lamp_auto_close_minutes
+                 红绿灯同状态自动关闭时长，正整数分钟（默认 20）；蓝黄灯不自动关闭
 
     改完重新执行一次 install.bat（会按新配置重启）。
+    只改自动关灯时长也可单独重启指示器生效；已关闭的灯收到新事件时自动恢复。
 
 三、Agent 侧怎么把状态发过来（发给要接 Agent 的人）
 

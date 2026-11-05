@@ -77,7 +77,15 @@ public partial class App : Application
         // is fully invisible. We never paint a fifth state (no gray
         // lamp, no "connecting" / "0 session(s)" / "pipe error" text,
         // no empty background).
-        _mainWindow = new MainWindow();
+        var lampAutoCloseMinutes = AgentBeaconConfig.DefaultIndicatorLampAutoCloseMinutes;
+        var cfgFileForAutoClose = AgentBeaconConfig.Discover();
+        if (cfgFileForAutoClose is not null
+            && AgentBeaconConfig.TryLoad(cfgFileForAutoClose, out var cfgAutoClose, out _)
+            && cfgAutoClose is not null)
+        {
+            lampAutoCloseMinutes = cfgAutoClose.IndicatorLampAutoCloseMinutes;
+        }
+        _mainWindow = new MainWindow(lampAutoCloseMinutes);
         _host = new IndicatorHost(pipeName,
             onSnapshotReceived: _mainWindow.OnSnapshotReceived,
             onCardEvent: _mainWindow.OnCardEvent,

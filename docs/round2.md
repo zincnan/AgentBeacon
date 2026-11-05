@@ -198,9 +198,11 @@ Card durations and slide-in animation (220 ms)
 are **UI constants** in `IndicatorUiConstants`. They are not part of HTTP
 Protocol v1.
 
-Completed lamps are no longer aged out by time. They remain visible until
-Receiver stops reporting the session, a newer status replaces them, or the
-user dismisses the lamp locally.
+Terminal lamps now use local timed dismissal: completed/failed lamps
+auto-close after 20 minutes in the same state by default, configurable via
+`indicator_lamp_auto_close_minutes` in the Windows `agentbeacon.json`.
+Automatic and manual dismissal share the same newer-event recovery rule;
+Receiver state is retained. Running/approval lamps do not auto-close.
 
 ## Build & run (manual verification)
 
