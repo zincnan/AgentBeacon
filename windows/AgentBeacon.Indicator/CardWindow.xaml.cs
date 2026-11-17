@@ -6,6 +6,29 @@ namespace AgentBeacon.Indicator;
 
 public partial class CardWindow : Window
 {
+    // Animate screen pixels instead of Window.Left: its DIP scale can change
+    // while a card crosses a monitor boundary during slide-out/retraction.
+    private static readonly DependencyProperty ScreenLeftProperty = DependencyProperty.Register(
+        nameof(ScreenLeft), typeof(double), typeof(CardWindow),
+        new PropertyMetadata(0.0, (d, _) => ((CardWindow)d).ApplyScreenPosition()));
+
+    private double ScreenLeft
+    {
+        get => (double)GetValue(ScreenLeftProperty);
+        set => SetValue(ScreenLeftProperty, value);
+    }
+
+    private void ApplyScreenPosition() => WindowScreenGeometry.Move(this, ScreenLeft, TargetTop);
+
+    private int _slideVersion;
+
+    private void StopSlideAnimation()
+    {
+        // A detached WPF clock can still have a Completed event queued.
+        _slideVersion++;
+        BeginAnimation(ScreenLeftProperty, null);
+    }
+
     /// <summary>
     /// Lifecycle state of a CardWindow. Drives whether the card is
     /// visible, whether a retract animation is in flight, and whether a
@@ -27,7 +50,7 @@ public partial class CardWindow : Window
 
     /// <summary>
     /// Anchor position the card is currently sitting at / sliding to.
-    /// Maintained by <see cref="MainWindow.AnchorCardOnModule"/> so the
+    /// Physical screen pixels, maintained by <see cref="MainWindow.AnchorCardOnModule"/> so the
     /// animation system can use it as the "rest" state.
     /// </summary>
     public double TargetLeft { get; set; }
@@ -133,17 +156,17 @@ public partial class CardWindow : Window
     }
 
     /// <summary>
-    /// Measure the card so ActualWidth / ActualHeight are valid. Called
-    /// by MainWindow right after construction; we place the card offscreen
-    /// at Left = -10000 / Top = -10000, ShowNoActivate it, then UpdateLayout
-    /// to force measure before the caller computes the anchor.
+    /// Measure transparently on the target monitor to establish its DPI
+    /// before MainWindow computes the anchor. Revealed by the actual Show.
     /// </summary>
-    public void MeasureOffscreen()
+    public void MeasureOnScreen(Rect workArea)
     {
         WindowStartupLocation = WindowStartupLocation.Manual;
-        Left = -10000;
-        Top = -10000;
+        Opacity = 0;
         ShowNoActivate();
+        TargetTop = workArea.Top + 16;
+        ScreenLeft = workArea.Left + 16;
+        ApplyScreenPosition();
         UpdateLayout();
     }
 
@@ -152,7 +175,7 @@ public partial class CardWindow : Window
     /// module's right edge) to its anchor position to the LEFT of the
     /// module.
     ///
-    /// WPF base-value semantics: we set the WINDOW's base Left to
+    /// WPF base-value semantics: we set the screen-pixel base Left to
     /// <paramref name="targetLeft"/> (the final position), then animate
     /// From = <paramref name="retractLeft"/> (start position) To =
     /// <paramref name="targetLeft"/>. With FillBehavior.Stop the
@@ -169,16 +192,18 @@ public partial class CardWindow : Window
         RetractLeft = retractLeft;
         // Detach any in-flight animation so the new base value is not
         // ignored.
-        BeginAnimation(LeftProperty, null);
+        StopSlideAnimation();
 
         // Base value = final target. After the animation ends with
         // FillBehavior.Stop the property reverts to this base.
-        Left = targetLeft;
-        Top = targetTop;
+        ScreenLeft = targetLeft;
+        ApplyScreenPosition();
 
         _phase = CardPhase.Showing;
+        Opacity = 1;
         ShowNoActivate();
 
+        var slideVersion = _slideVersion;
         var anim = new DoubleAnimation
         {
             From = retractLeft,
@@ -189,16 +214,17 @@ public partial class CardWindow : Window
         };
         anim.Completed += (_, _) =>
         {
+            if (slideVersion != _slideVersion || _phase != CardPhase.Showing) return;
             // Animation ended; revert to base. If a new Show has
             // happened during the animation (state Show-during-SlideOut),
             // the new SlideOutFromRightOfModule call already detached
             // this animation and set a fresh base; reaching here just
             // means the original animation finished and the card is now
             // at base = targetLeft. We promote phase to Visible.
-            BeginAnimation(LeftProperty, null);
+            StopSlideAnimation();
             if (_phase == CardPhase.Showing) _phase = CardPhase.Visible;
         };
-        BeginAnimation(LeftProperty, anim);
+        BeginAnimation(ScreenLeftProperty, anim);
     }
 
     /// <summary>
@@ -217,7 +243,7 @@ public partial class CardWindow : Window
         TargetTop = targetTop;
         RetractLeft = retractLeft;
 
-        BeginAnimation(LeftProperty, null);
+        StopSlideAnimation();
 
         if (animate || _phase == CardPhase.Hidden || _phase == CardPhase.Retracting || !IsVisible)
         {
@@ -225,9 +251,10 @@ public partial class CardWindow : Window
             return;
         }
 
-        Left = targetLeft;
-        Top = targetTop;
+        ScreenLeft = targetLeft;
+        ApplyScreenPosition();
         _phase = CardPhase.Visible;
+        Opacity = 1;
         ShowNoActivate();
     }
 
@@ -240,6 +267,8 @@ public partial class CardWindow : Window
         double targetTop,
         double retractLeft)
     {
+        var unchanged = TargetLeft == targetLeft && TargetTop == targetTop
+            && RetractLeft == retractLeft;
         TargetLeft = targetLeft;
         TargetTop = targetTop;
         RetractLeft = retractLeft;
@@ -252,12 +281,22 @@ public partial class CardWindow : Window
 
         if (_phase == CardPhase.Retracting)
         {
+            if (!unchanged)
+            {
+                var currentLeft = ScreenLeft;
+                StopSlideAnimation();
+                ScreenLeft = currentLeft;
+                ApplyScreenPosition();
+                _phase = CardPhase.Visible;
+                SlideBackToRightOfModule();
+            }
             return;
         }
 
-        BeginAnimation(LeftProperty, null);
-        Left = targetLeft;
-        Top = targetTop;
+        if (unchanged) return;
+        StopSlideAnimation();
+        ScreenLeft = targetLeft;
+        ApplyScreenPosition();
         _phase = CardPhase.Visible;
     }
 
@@ -280,7 +319,7 @@ public partial class CardWindow : Window
         if (_phase == CardPhase.Retracting) return;
 
         double retractLeft = RetractLeft;
-        double currentLeft = Left;
+        double currentLeft = ScreenLeft;
         // Already at or past the retract seat -> skip the animation and
         // tear down synchronously. Avoids a no-op animation when the
         // card is already at the seat (e.g. multiple consecutive
@@ -292,12 +331,13 @@ public partial class CardWindow : Window
         }
 
         _phase = CardPhase.Retracting;
-        BeginAnimation(LeftProperty, null);
+        StopSlideAnimation();
 
         // Base Left = retracted seat so that any mid-animation rebase
         // (e.g. Show during retract in MainWindow) lands correctly.
-        Left = retractLeft;
+        ScreenLeft = retractLeft;
 
+        var slideVersion = _slideVersion;
         var anim = new DoubleAnimation
         {
             From = currentLeft,
@@ -308,10 +348,11 @@ public partial class CardWindow : Window
         };
         anim.Completed += (_, _) =>
         {
-            BeginAnimation(LeftProperty, null);
+            if (slideVersion != _slideVersion || _phase != CardPhase.Retracting) return;
+            StopSlideAnimation();
             FinishRetract();
         };
-        BeginAnimation(LeftProperty, anim);
+        BeginAnimation(ScreenLeftProperty, anim);
     }
 
     /// <summary>
@@ -323,14 +364,14 @@ public partial class CardWindow : Window
     public void RetractImmediate()
     {
         if (_phase == CardPhase.Hidden) return;
-        BeginAnimation(LeftProperty, null);
+        StopSlideAnimation();
         Hide();
         FinishRetract();
     }
 
     private void FinishRetract()
     {
-        BeginAnimation(LeftProperty, null);
+        StopSlideAnimation();
         Hide();
         _phase = CardPhase.Hidden;
         try { RetractCompleted?.Invoke(this, EventArgs.Empty); } catch { /* swallow */ }

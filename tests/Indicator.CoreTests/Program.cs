@@ -104,6 +104,10 @@ public static class Program
             ("AnchoredCardLayout_NaturalTopsOverlap_HidesOlder",AnchoredCardLayout_NaturalTopsOverlap_HidesOlder),
             ("AnchoredCardLayout_SafeTopSafeBottomClamp",       AnchoredCardLayout_SafeTopSafeBottomClamp),
             ("AnchoredCardLayout_NoRoom_HidesOlderNotNewer",    AnchoredCardLayout_NoRoom_HidesOlderNotNewer),
+            ("CardAnchor_MultipleMonitorOrigins",               CardAnchor_MultipleMonitorOrigins),
+            ("CardAnchor_LeftEdgeAndRetraction",                CardAnchor_LeftEdgeAndRetraction),
+            ("CardAnchor_DpiScaledDimensions",                  CardAnchor_DpiScaledDimensions),
+            ("CardLayout_OffsetMonitorAndDpi",                  CardLayout_OffsetMonitorAndDpi),
         };
 
         var sw0 = Stopwatch.StartNew();
@@ -1365,6 +1369,71 @@ public static class Program
         finally
         {
             File.Delete(path);
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task CardAnchor_MultipleMonitorOrigins()
+    {
+        foreach (var origin in new[] { -1920.0, 0.0, 2560.0 })
+        {
+            var (left, retract) = AnchoredCardLayout.ComputeHorizontalAnchor(
+                origin + 1500, origin + 1584, 300, origin, 12, 16);
+            Assert(left == origin + 1188, "card remains left of its own module on every monitor");
+            Assert(retract == origin + 1600, "retraction seat follows module on every monitor");
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task CardAnchor_LeftEdgeAndRetraction()
+    {
+        var (left, retract) = AnchoredCardLayout.ComputeHorizontalAnchor(
+            -1900, -1816, 300, -1920, 12, 16);
+        Assert(left == -1920, "insufficient room clamps to left monitor, not primary origin zero");
+        Assert(retract == -1800, "left-edge clamp does not change authoritative retraction seat");
+        var inset = AnchoredCardLayout.ComputeHorizontalAnchor(-1900, -1816, 300, -1872, 12, 16);
+        Assert(inset.Left == -1872, "work area excludes a left-side taskbar");
+        return Task.CompletedTask;
+    }
+
+    private static Task CardAnchor_DpiScaledDimensions()
+    {
+        foreach (var scale in new[] { 1.0, 1.5, 1.75 })
+        {
+            var (left, retract) = AnchoredCardLayout.ComputeHorizontalAnchor(
+                -900, -900 + 84 * scale, 300 * scale, -1920, 12 * scale, 16 * scale);
+            Assert(left == -900 - 312 * scale, "card width and gap scale once, without scaling screen origin");
+            Assert(retract == -900 + 100 * scale, "retraction offset scales with module DPI");
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task CardLayout_OffsetMonitorAndDpi()
+    {
+        foreach (var scale in new[] { 1.0, 1.5, 1.75 })
+        {
+            const double workTop = 465;
+            const double workBottom = 1545;
+            var inputs = new[]
+            {
+                Make("top", workTop + 5, 100 * scale),
+                Make("middle", workTop + 300 * scale, 100 * scale),
+                Make("bottom", workBottom - 5, 100 * scale),
+            };
+            var placements = AnchoredCardLayout.Compute(inputs,
+                workTop + 64 * scale, workBottom, 12 * scale);
+            Assert(placements.Values.All(p => p.Visible), "three cards fit in offset monitor");
+            Assert(placements["top"].Top == workTop + 64 * scale, "top clamp uses target monitor and DPI margin");
+            Assert(placements["middle"].Top == workTop + 250 * scale, "middle follows module screen Y");
+            Assert(placements["bottom"].Top == workBottom - 100 * scale, "bottom clamp uses target work area");
+
+            var overlap = AnchoredCardLayout.Compute(new[]
+            {
+                Make("older", workTop + 180 * scale, 100 * scale),
+                Make("newer", workTop + 250 * scale, 100 * scale),
+            }, workTop + 64 * scale, workBottom, 12 * scale);
+            Assert(!overlap["older"].Visible && overlap["newer"].Visible,
+                "newest-wins collision handling survives offset and DPI conversion");
         }
         return Task.CompletedTask;
     }

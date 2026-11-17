@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using AgentBeacon.Indicator.Core;
 using AgentBeacon.Shared;
@@ -38,7 +39,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, DispatcherTimer> _cardTimers = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Per-session screen-Y of the LampModule's vertical center, cached
+    /// Per-session physical screen-Y of the LampModule's vertical center, cached
     /// each time the layout is rebuilt so the per-card anchored layout
     /// helper does not have to walk the visual tree. Keyed by session_id.
     /// </summary>
@@ -100,6 +101,7 @@ public partial class MainWindow : Window
         // Cards are anchored to module SCREEN positions; when the whole
         // window moves (drag), they must follow.
         LocationChanged += (_, _) => QueueLayoutRefresh();
+        DpiChanged += (_, _) => QueueLayoutRefresh();
 
         _tickTimer = new DispatcherTimer
         {
@@ -271,8 +273,7 @@ public partial class MainWindow : Window
         }
 
         // Step 3: cache module center Y (screen coords) for every live
-        // module. The anchor math uses window.Left/Top (screen) + the
-        // module's offset relative to the window.
+        // module, using physical screen pixels even on mixed-DPI displays.
         UpdateLayout();
         ModuleStack.UpdateLayout();
         UpdateModuleCenterYCaches();
@@ -288,9 +289,8 @@ public partial class MainWindow : Window
         foreach (var kv in _modules)
         {
             var module = kv.Value;
-            var relative = module.TransformToAncestor(this).Transform(new Point(0, 0));
-            var moduleTopOnScreen = this.Top + relative.Y;
-            _moduleCenterYScreen[kv.Key] = moduleTopOnScreen + module.ActualHeight / 2.0;
+            _moduleCenterYScreen[kv.Key] =
+                module.PointToScreen(new Point(0, module.ActualHeight / 2.0)).Y;
         }
     }
 
@@ -429,9 +429,10 @@ public partial class MainWindow : Window
         _cards[ev.Session.SessionId] = card;
         _cardShowOrdinal[ev.Session.SessionId] = ++_nextCardShowOrdinal;
 
-        // MEASURE FIRST: place the card offscreen, Show, UpdateLayout so
-        // ActualWidth / ActualHeight are real values.
-        card.MeasureOffscreen();
+        // Measure invisibly on the lamp's monitor so its initial DPI is correct.
+        card.MeasureOnScreen(WindowScreenGeometry.GetWorkArea(this));
+        card.DpiChanged += (_, _) => QueueLayoutRefresh();
+        card.SizeChanged += (_, _) => QueueLayoutRefresh();
 
         // Re-anchor all cards (handles new + existing collision).
         ReanchorAllCards(reshowSessionId: ev.Session.SessionId);
@@ -642,9 +643,11 @@ public partial class MainWindow : Window
     {
         if (_cards.Count == 0) return;
 
-        var work = SystemParameters.WorkArea;
-        var safeTop = work.Top + IndicatorUiConstants.LampTopSafeMargin;
+        var work = WindowScreenGeometry.GetWorkArea(this);
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var safeTop = work.Top + IndicatorUiConstants.LampTopSafeMargin * dpi.DpiScaleY;
         var safeBottom = work.Bottom;
+        UpdateModuleCenterYCaches();
 
         var cardsSnapshot = _cards
             .OrderBy(kv => _cardShowOrdinal.TryGetValue(kv.Key, out var ordinal) ? ordinal : 0)
@@ -658,12 +661,12 @@ public partial class MainWindow : Window
             {
                 SessionId = kv.Key,
                 ModuleCenterYScreen = centerY,
-                Height = kv.Value.ActualHeight,
+                Height = kv.Value.ActualHeight * dpi.DpiScaleY,
             });
         }
 
         var placements = AnchoredCardLayout.Compute(
-            inputs, safeTop, safeBottom, gap: IndicatorUiConstants.CardVerticalGap);
+            inputs, safeTop, safeBottom, gap: IndicatorUiConstants.CardVerticalGap * dpi.DpiScaleY);
 
         foreach (var kv in cardsSnapshot)
         {
@@ -681,40 +684,31 @@ public partial class MainWindow : Window
                 }
                 continue;
             }
-            AnchorCardOnModule(card, placement.Top, reshowSessionId == kv.Key);
+            AnchorCardOnModule(card, placement.Top, work, dpi, reshowSessionId == kv.Key);
         }
     }
 
     /// <summary>
     /// Position a CardWindow so it sits at <paramref name="targetTop"/>
     /// (already collision-adjusted) and CardToModuleGap px to the left of
-    /// its LampModule. Coordinates are SCREEN-ABSOLUTE (Window.Left/Top
-    /// are screen coords for a topmost window with no parent transform).
+    /// its LampModule. All geometry passed to CardWindow is in physical
+    /// screen pixels; WPF DIPs are converted using the lamp monitor's DPI.
     /// </summary>
-    private void AnchorCardOnModule(CardWindow card, double targetTop, bool restartShow)
+    private void AnchorCardOnModule(CardWindow card, double targetTop, Rect work,
+        DpiScale dpi, bool restartShow)
     {
-        var work = SystemParameters.WorkArea;
         var sessionId = card.SessionId;
         if (!_moduleCenterYScreen.TryGetValue(sessionId, out _))
         {
             return;
         }
         LampModuleView module = _modules[sessionId];
-        var relative = module.TransformToAncestor(this).Transform(new Point(0, 0));
-        var moduleLeftOnScreen = this.Left + relative.X;
-        var moduleWidth = module.ActualWidth;
-        // Retracted seat: just past the module's right edge.
-        double retractLeft = moduleLeftOnScreen + moduleWidth + 16;
-        // Anchor: to the LEFT of the module, with CardToModuleGap px
-        // between the card's right edge and the module's left edge.
-        double targetLeft = moduleLeftOnScreen - IndicatorUiConstants.CardToModuleGap - card.ActualWidth;
-        if (targetLeft < work.Left) targetLeft = work.Left;
-
-        // Stay within the safe vertical band.
-        if (targetTop < work.Top + IndicatorUiConstants.LampTopSafeMargin)
-            targetTop = work.Top + IndicatorUiConstants.LampTopSafeMargin;
-        if (targetTop + card.ActualHeight > work.Bottom)
-            targetTop = work.Bottom - card.ActualHeight;
+        var moduleLeft = module.PointToScreen(new Point(0, 0)).X;
+        var moduleRight = module.PointToScreen(new Point(module.ActualWidth, 0)).X;
+        var (targetLeft, retractLeft) = AnchoredCardLayout.ComputeHorizontalAnchor(
+            moduleLeft, moduleRight, card.ActualWidth * dpi.DpiScaleX,
+            work.Left, IndicatorUiConstants.CardToModuleGap * dpi.DpiScaleX,
+            retractOffset: 16 * dpi.DpiScaleX);
 
         if (restartShow)
             card.RestartShow(targetLeft, targetTop, retractLeft, animate: true);

@@ -10,10 +10,10 @@ public readonly struct AnchoredCardInput
     /// <summary>The session this card belongs to (used as the dictionary key).</summary>
     public required string SessionId { get; init; }
 
-    /// <summary>The vertical center of the owning LampModule, in screen Y.</summary>
+    /// <summary>The vertical center of the owning LampModule, in physical screen pixels.</summary>
     public required double ModuleCenterYScreen { get; init; }
 
-    /// <summary>Card's measured height (post-WPF-measure).</summary>
+    /// <summary>Card's measured height, converted to target-monitor physical pixels.</summary>
     public required double Height { get; init; }
 }
 
@@ -26,7 +26,7 @@ public readonly struct AnchoredCardPlacement
     /// <summary>True when the card fits inside the safe area without overlapping another card, and should be shown.</summary>
     public bool Visible { get; init; }
 
-    /// <summary>Final screen-Y of the card's top edge.</summary>
+    /// <summary>Final physical screen-Y of the card's top edge.</summary>
     public double Top { get; init; }
 }
 
@@ -54,6 +54,12 @@ public readonly struct AnchoredCardPlacement
 /// </summary>
 public static class AnchoredCardLayout
 {
+    /// <summary>All arguments and results use the same screen-pixel coordinate space.</summary>
+    public static (double Left, double RetractLeft) ComputeHorizontalAnchor(
+        double moduleLeft, double moduleRight, double cardWidth,
+        double workLeft, double gap, double retractOffset)
+        => (Math.Max(workLeft, moduleLeft - gap - cardWidth), moduleRight + retractOffset);
+
     public static IReadOnlyDictionary<string, AnchoredCardPlacement> Compute(
         IReadOnlyList<AnchoredCardInput> inputs,
         double safeTop,
