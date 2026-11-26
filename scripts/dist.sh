@@ -38,8 +38,9 @@ publish() {
         -p:PublishSingleFile=false \
         -o "${out}"
 }
-publish "${WORK}/receiver/AgentBeacon.Receiver.csproj"              "${OUT}/receiver"
-publish "${WORK}/windows/AgentBeacon.Indicator/AgentBeacon.Indicator.csproj" "${OUT}/indicator"
+publish "${WORK}/receiver/AgentBeacon.Receiver.csproj"                            "${OUT}/receiver"
+publish "${WORK}/windows/AgentBeacon.ReceiverLauncher/AgentBeacon.ReceiverLauncher.csproj" "${OUT}/receiver"
+publish "${WORK}/windows/AgentBeacon.Indicator/AgentBeacon.Indicator.csproj"               "${OUT}/indicator"
 echo "publish   : ok"
 
 # 3. 配置模板 → 接收方直接改的 agentbeacon.json

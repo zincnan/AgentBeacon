@@ -59,10 +59,13 @@ New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 robocopy $Repo $InstallDir /E /XD .git bin obj .vs /XF agentbeacon.json /R:1 /W:1 /NFL /NDL /NJH | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed (exit $LASTEXITCODE)" }
 
-# 2. 构建 Receiver + Indicator
+# 2. 构建 Receiver + Launcher + Indicator
 dotnet build (Join-Path $InstallDir 'receiver\AgentBeacon.Receiver.csproj') -c Release `
     | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "receiver build failed" }
+dotnet build (Join-Path $InstallDir 'windows\AgentBeacon.ReceiverLauncher\AgentBeacon.ReceiverLauncher.csproj') -c Release `
+    | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "receiver launcher build failed" }
 dotnet build (Join-Path $InstallDir 'windows\AgentBeacon.Indicator\AgentBeacon.Indicator.csproj') -c Release `
     | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "indicator build failed" }
@@ -75,49 +78,57 @@ if (-not (Test-Path $config)) {
     Write-Host "config     : created $config  <-- 按需修改端口 / token / no_auth"
 }
 
-# 4. Receiver 启动脚本（隐藏窗口运行，读取配置文件）。
-#    用 apphost .exe 而不是 `dotnet dll`：进程名是 agentbeacon-receiver，
-#    重装/卸载时 Stop-Process -Name 才能找到并停掉它。
-$runReceiver = @'
-$dir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$exe = Join-Path $dir 'receiver\bin\Release\net10.0\agentbeacon-receiver.exe'
-$cfg = Join-Path $dir 'agentbeacon.json'
-$pidFile = Join-Path $dir 'receiver.pid'
-$p = Start-Process $exe -ArgumentList @('--config', $cfg) -WorkingDirectory $dir -PassThru -WindowStyle Hidden
-Set-Content -Path $pidFile -Value $p.Id -Encoding ASCII
-Wait-Process -Id $p.Id
-Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
-'@
-Set-Content -Path (Join-Path $InstallDir 'run-receiver.ps1') -Value $runReceiver -Encoding UTF8
+# 4. 清理旧版安装遗留的 PowerShell 启动包装脚本
+Remove-Item (Join-Path $InstallDir 'run-receiver.ps1') -Force -ErrorAction SilentlyContinue
 
 # 5. 停掉当前安装目录对应的旧实例（避免误杀其他端口/开发实例）
 $receiverExe = Join-Path $InstallDir 'receiver\bin\Release\net10.0\agentbeacon-receiver.exe'
+$launcherExe = Join-Path $InstallDir 'windows\AgentBeacon.ReceiverLauncher\bin\Release\net10.0\agentbeacon-receiver-launcher.exe'
 $indicatorExe = Join-Path $InstallDir 'windows\AgentBeacon.Indicator\bin\Release\net10.0-windows\agentbeacon-indicator.exe'
 Stop-AgentBeaconProcess 'agentbeacon-receiver' $receiverExe (Join-Path $InstallDir 'receiver.pid')
 Stop-AgentBeaconProcess 'agentbeacon-indicator' $indicatorExe
+
+function Enable-StartupShortcut {
+    param([string]$ShortcutName)
+    $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder'
+    if (-not (Test-Path $regPath)) { return }
+    $props = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
+    if ($null -ne $props -and $null -ne $props.PSObject.Properties[$ShortcutName]) {
+        $bytes = [byte[]]$props.$ShortcutName
+        if ($bytes.Length -gt 0 -and $bytes[0] -ne 2) {
+            Remove-ItemProperty -Path $regPath -Name $ShortcutName -ErrorAction SilentlyContinue
+            Write-Host "autostart  : cleared disabled flag for $ShortcutName"
+        }
+    }
+}
 
 # 6. 开机自启快捷方式（shell:startup）
 $startup = [Environment]::GetFolderPath('Startup')
 $ws = New-Object -ComObject WScript.Shell
 
-$lnk1 = $ws.CreateShortcut((Join-Path $startup 'AgentBeacon Receiver.lnk'))
-$lnk1.TargetPath = 'powershell.exe'
-$lnk1.Arguments  = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\run-receiver.ps1`""
+$lnk1Path = Join-Path $startup 'AgentBeacon Receiver.lnk'
+if (Test-Path $lnk1Path) { Remove-Item $lnk1Path -Force }
+$lnk1 = $ws.CreateShortcut($lnk1Path)
+$lnk1.TargetPath = $launcherExe
+$lnk1.Arguments  = "--root `"$InstallDir`""
 $lnk1.WorkingDirectory = $InstallDir
-$lnk1.WindowStyle = 7
 $lnk1.Save()
 
-$lnk2 = $ws.CreateShortcut((Join-Path $startup 'AgentBeacon Indicator.lnk'))
+$lnk2Path = Join-Path $startup 'AgentBeacon Indicator.lnk'
+if (Test-Path $lnk2Path) { Remove-Item $lnk2Path -Force }
+$lnk2 = $ws.CreateShortcut($lnk2Path)
 $lnk2.TargetPath = $indicatorExe
 $lnk2.WorkingDirectory = $InstallDir
 $lnk2.Save()
+
+Enable-StartupShortcut 'AgentBeacon Receiver.lnk'
+Enable-StartupShortcut 'AgentBeacon Indicator.lnk'
 Write-Host "autostart  : 2 shortcuts in $startup"
 
 # 7. 立即后台启动
 if (-not $NoStart) {
-    Start-Process 'powershell.exe' `
-        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\run-receiver.ps1`"" `
-        -WorkingDirectory $InstallDir -WindowStyle Hidden
+    Start-Process $launcherExe -ArgumentList @('--root', $InstallDir) -WorkingDirectory $InstallDir
+    Start-Sleep -Seconds 1
     Start-Process $indicatorExe -WorkingDirectory $InstallDir
     Write-Host "started    : receiver + indicator (background)"
 }

@@ -11,6 +11,8 @@ windows/AgentBeacon.Indicator.Core/bin/
 windows/AgentBeacon.Indicator.Core/obj/
 windows/AgentBeacon.Indicator/bin/
 windows/AgentBeacon.Indicator/obj/
+windows/AgentBeacon.ReceiverLauncher/bin/
+windows/AgentBeacon.ReceiverLauncher/obj/
 
 # Python caches
 __pycache__/

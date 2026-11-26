@@ -46,13 +46,19 @@ Stop-AgentBeaconProcess 'agentbeacon-indicator' `
     (Join-Path $Dir 'indicator\agentbeacon-indicator.exe')
 
 $startup = [Environment]::GetFolderPath('Startup')
+$startupApproved = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder'
 foreach ($n in 'AgentBeacon Receiver.lnk', 'AgentBeacon Indicator.lnk') {
     $p = Join-Path $startup $n
     if (Test-Path $p) {
         Remove-Item $p -Force
         Write-Host "已删除    : $p"
     }
+    if (Test-Path $startupApproved) {
+        Remove-ItemProperty -Path $startupApproved -Name $n -ErrorAction SilentlyContinue
+    }
 }
+
+Remove-Item (Join-Path $Dir 'run-receiver.ps1') -Force -ErrorAction SilentlyContinue
 
 if ($RemoveFiles) {
     Remove-Item $Dir -Recurse -Force

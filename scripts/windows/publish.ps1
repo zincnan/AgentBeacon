@@ -43,12 +43,17 @@ if ($LASTEXITCODE -ge 8) { throw "robocopy failed (exit $LASTEXITCODE)" }
 if (Test-Path $Out) { Remove-Item $Out -Recurse -Force }
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
 
-# 1. 发布 Receiver（进程名 = agentbeacon-receiver，便于停旧实例）
+# 1. 发布 Receiver + Launcher（进程名 = agentbeacon-receiver，便于停旧实例；WinExe 启动器消除 PowerShell 黑框与误禁用）
 dotnet publish (Join-Path $work 'receiver\AgentBeacon.Receiver.csproj') `
     -c Release -r $rid @sc `
     -p:PublishSingleFile=false `
     -o (Join-Path $Out 'receiver')
 if ($LASTEXITCODE -ne 0) { throw "receiver publish failed" }
+dotnet publish (Join-Path $work 'windows\AgentBeacon.ReceiverLauncher\AgentBeacon.ReceiverLauncher.csproj') `
+    -c Release -r $rid @sc `
+    -p:PublishSingleFile=false `
+    -o (Join-Path $Out 'receiver')
+if ($LASTEXITCODE -ne 0) { throw "receiver launcher publish failed" }
 
 # 2. 发布 Indicator（WPF）
 dotnet publish (Join-Path $work 'windows\AgentBeacon.Indicator\AgentBeacon.Indicator.csproj') `
